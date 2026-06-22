@@ -13,3 +13,6 @@ Resources/bin/
 
 # macOS
 .DS_Store
+
+# 临时工具环境
+.venv-redact/

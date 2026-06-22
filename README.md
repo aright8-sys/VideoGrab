@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="Assets/AppIcon.png" width="128" height="128" alt="VideoGrab logo">
+</p>
+
 <h1 align="center">VideoGrab</h1>
 
 <p align="center">
@@ -15,6 +19,10 @@
   <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
 </p>
 
+<p align="center">
+  <img src="docs/screenshot.png" width="380" alt="VideoGrab 截图">
+</p>
+
 它常驻菜单栏，打开面板后粘贴（或自动识别剪贴板里的）视频链接，选择画质，即可下载到本地。内置 yt-dlp + ffmpeg，自动处理国内/国外站点的网络分流。
 
 - 🪶 **轻巧**：原生 Swift + SwiftUI，无第三方依赖
@@ -24,7 +32,7 @@
 - 📋 **剪贴板预填**：打开面板时自动识别剪贴板中的视频链接
 - 📊 **进度与通知**：实时进度条，完成后系统通知，点击打开保存目录
 
-> 📦 **自行构建**：克隆仓库后运行 `./build-app.sh` 即可生成 `VideoGrab.app`。
+> 📦 **直接下载**：前往 [Releases](https://github.com/aright8-sys/VideoGrab/releases/latest) 下载打包好的 `VideoGrab.zip`，或按下方说明自行构建。
 
 ## ⚠️ 免责声明
 

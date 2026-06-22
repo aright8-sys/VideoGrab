@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="Assets/AppIcon.png" width="128" height="128" alt="VideoGrab logo">
+</p>
+
 <h1 align="center">VideoGrab</h1>
 
 <p align="center">
@@ -15,6 +19,10 @@
   <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
 </p>
 
+<p align="center">
+  <img src="docs/screenshot.png" width="380" alt="VideoGrab screenshot">
+</p>
+
 It lives in your menu bar. Open the panel, paste (or auto-detect from clipboard) a video URL, pick a quality, and save locally. Ships with yt-dlp + ffmpeg and handles per-site network routing automatically.
 
 - 🪶 **Lightweight** — native Swift + SwiftUI, no third-party dependencies
@@ -24,7 +32,7 @@ It lives in your menu bar. Open the panel, paste (or auto-detect from clipboard)
 - 📋 **Clipboard prefill** — detects video URLs from clipboard when the panel opens
 - 📊 **Progress & notify** — live progress bar; system notification on completion; click to open save folder
 
-> 📦 **Build yourself**: clone the repo and run `./build-app.sh` to produce `VideoGrab.app`.
+> 📦 **Download**: grab the prebuilt `VideoGrab.zip` from [Releases](https://github.com/aright8-sys/VideoGrab/releases/latest), or build it yourself (see below).
 
 ## ⚠️ Disclaimer
 
