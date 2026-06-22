@@ -1,0 +1,15 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# 打包产物
+*.app/
+*.icns
+*.zip
+
+# 下载的内核二进制（build-app.sh 自动获取）
+Resources/bin/
+
+# macOS
+.DS_Store
