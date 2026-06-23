@@ -1,8 +1,10 @@
 import Foundation
 
 enum Sites {
-    static let cnHosts = ["bilibili.com", "b23.tv", "xinpianchang.com"]
+    static let cnHosts = ["bilibili.com", "b23.tv", "xinpianchang.com",
+                          "xiaohongshu.com", "xhslink.com", "xhs.cn"]
     static let bilibiliHosts = ["bilibili.com", "b23.tv"]
+    static let xiaohongshuHosts = ["xiaohongshu.com", "xhslink.com", "xhs.cn"]
 
     static let clipboardPattern = #"https?://[^\s'"<>]+"#
 
@@ -14,6 +16,16 @@ enum Sites {
     static func isBilibili(_ host: String) -> Bool {
         let h = host.lowercased()
         return bilibiliHosts.contains { h.contains($0) }
+    }
+
+    static func isXiaohongshu(_ host: String) -> Bool {
+        let h = host.lowercased()
+        return xiaohongshuHosts.contains { h.contains($0) }
+    }
+
+    // 需要读取浏览器 Cookie 才能稳定下载的站点（登录态/风控）
+    static func needsCookies(_ host: String) -> Bool {
+        isBilibili(host) || isXiaohongshu(host)
     }
 
     static func firstSupportedURL(in text: String) -> String? {

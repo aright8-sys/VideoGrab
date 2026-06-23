@@ -9,6 +9,26 @@ enum Quality: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    // 画质选择器上显示的简短标签
+    var shortLabel: String {
+        switch self {
+        case .best:  return "最高"
+        case .p1080: return "1080p"
+        case .p720:  return "720p"
+        case .audio: return "音频"
+        }
+    }
+
+    // 画质选择器上的图标
+    var icon: String {
+        switch self {
+        case .best:  return "sparkles"
+        case .p1080: return "4k.tv"
+        case .p720:  return "tv"
+        case .audio: return "music.note"
+        }
+    }
+
     // 传给 yt-dlp 的格式/输出参数
     var formatArgs: [String] {
         switch self {
@@ -162,8 +182,8 @@ final class Downloader {
 
         var args = quality.formatArgs
         args += proxy
-        // B站需要登录态才能过风控/拿高清，自动读 Chrome Cookie
-        if Sites.isBilibili(host) {
+        // B站/小红书需要登录态才能过风控/拿高清，自动读 Chrome Cookie
+        if Sites.needsCookies(host) {
             args += ["--cookies-from-browser", "chrome"]
         }
         args += ["--newline", "--no-playlist",
