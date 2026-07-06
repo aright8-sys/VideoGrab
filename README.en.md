@@ -36,6 +36,11 @@ It lives in your menu bar. Open the panel, paste (or auto-detect from clipboard)
 
 ## 🆕 Changelog
 
+### v2.1 — Fix Xinpianchang downloads
+
+- 🔧 **Fixed broken Xinpianchang downloads**: article pages now sit behind a Wangsu JS anti-bot challenge, so yt-dlp's direct page fetch gets `403 / 406`. VideoGrab now resolves the direct link via the mobile share API (which bypasses the challenge) and downloads it with a native downloader — the CDN requires a `Range` header and the link is an IP-bound pre-signed URL that can't be routed through yt-dlp.
+- 🧾 **Scrollable error card**: long errors are no longer truncated or hidden behind the footer; fully selectable and copyable.
+
 ### v2.0 — Redesigned UI + Xiaohongshu support
 
 A major release with a fully reworked interface and experience:

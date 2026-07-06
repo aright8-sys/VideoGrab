@@ -51,6 +51,7 @@ enum DownloadResult {
 
 final class Downloader {
     private var process: Process?
+    private var directDownloader: DirectDownloader?
     private let appSupportBin: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return base.appendingPathComponent("VideoGrab/bin", isDirectory: true)
@@ -272,9 +273,26 @@ final class Downloader {
         }
     }
 
+    // 直链下载（新片场等预签名 URL，不能过 yt-dlp）：用 URLSession 按字节原样请求
+    func downloadDirect(mp4: String, title: String, quality: Quality, saveDir: URL,
+                        onProgress: @escaping (Double?, String?) -> Void,
+                        onFinish: @escaping (DownloadResult) -> Void) {
+        let ext = quality == .audio ? "mp3" : "mp4"
+        let dest = saveDir.appendingPathComponent(sanitizeFilename(title) + "." + ext)
+        let ffmpeg: String? = quality == .audio ? ffmpegDir().map { $0 + "/ffmpeg" } : nil
+        if quality == .audio && ffmpeg == nil {
+            onFinish(.failure("找不到 ffmpeg，无法提取音频。")); return
+        }
+        let dd = DirectDownloader(referer: "https://www.xinpianchang.com/", dest: dest, audioFFmpeg: ffmpeg)
+        self.directDownloader = dd
+        dd.start(url: mp4, onProgress: onProgress, onFinish: onFinish)
+    }
+
     func cancel() {
         process?.terminate()
         process = nil
+        directDownloader?.cancel()
+        directDownloader = nil
     }
 
     // MARK: - 内核版本 / 更新
@@ -316,6 +334,14 @@ final class Downloader {
                 done("执行失败：\(error.localizedDescription)", -1)
             }
         }
+    }
+
+    // 直链下载时用真实标题命名，去掉文件系统非法字符
+    private func sanitizeFilename(_ s: String) -> String {
+        let bad = CharacterSet(charactersIn: "/\\:*?\"<>|\n\r")
+        let cleaned = s.components(separatedBy: bad).joined(separator: "_")
+            .trimmingCharacters(in: .whitespaces)
+        return cleaned.isEmpty ? "video" : String(cleaned.prefix(120))
     }
 
     // MARK: - 解析

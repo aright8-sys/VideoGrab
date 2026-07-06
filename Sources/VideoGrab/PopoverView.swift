@@ -314,11 +314,15 @@ struct PopoverView: View {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
-                Text(state.lastError)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(4)
-                    .textSelection(.enabled)
+                // 报错可能很长：限高滚动显示，完整可选可复制，避免溢出遮住底部按钮
+                ScrollView(.vertical) {
+                    Text(state.lastError)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 90)
             }
             .padding(10)
             .background(Theme.card.fill(Color.orange.opacity(0.12)))

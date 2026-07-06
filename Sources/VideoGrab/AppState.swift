@@ -71,29 +71,60 @@ final class AppState: ObservableObject {
         lastFinishedName = ""
         statusLine = "准备中…"
 
-        downloader.download(url: trimmed, quality: quality, saveDir: saveDir,
-            onProgress: { [weak self] pct, line in
-                Task { @MainActor in
-                    if let pct { self?.progress = pct }
-                    if let line { self?.statusLine = line }
-                }
-            },
-            onFinish: { [weak self] result in
+        // 新片场文章页有 JS 反爬：先走移动端接口解析出预签名直链，再用 URLSession 直下
+        // （这类签名 URL 过 yt-dlp 会因 URL 规范化破坏签名而 403）
+        let host = URL(string: trimmed)?.host ?? ""
+        if XinpianchangResolver.isXinpianchang(host) {
+            statusLine = "正在解析新片场…"
+            XinpianchangResolver.resolve(url: trimmed, quality: quality) { [weak self] result in
                 Task { @MainActor in
                     guard let self else { return }
-                    self.isDownloading = false
-                    self.progress = 0
                     switch result {
-                    case .success(let name):
-                        self.statusLine = "完成"
-                        self.lastFinishedName = name
-                        Notify.send(title: "下载完成", body: name, fileDir: self.saveDir)
-                    case .failure(let msg):
+                    case .success(let r):
+                        self.downloader.downloadDirect(mp4: r.mp4, title: r.title, quality: self.quality,
+                                                       saveDir: self.saveDir,
+                                                       onProgress: self.progressHandler(),
+                                                       onFinish: self.finishHandler())
+                    case .failure(let err):
+                        self.isDownloading = false
+                        self.progress = 0
                         self.statusLine = ""
-                        self.lastError = msg
+                        self.lastError = err.localizedDescription
                     }
                 }
-            })
+            }
+            return
+        }
+        downloader.download(url: trimmed, quality: quality, saveDir: saveDir,
+                            onProgress: progressHandler(), onFinish: finishHandler())
+    }
+
+    private func progressHandler() -> (Double?, String?) -> Void {
+        { [weak self] pct, line in
+            Task { @MainActor in
+                if let pct { self?.progress = pct }
+                if let line { self?.statusLine = line }
+            }
+        }
+    }
+
+    private func finishHandler() -> (DownloadResult) -> Void {
+        { [weak self] result in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isDownloading = false
+                self.progress = 0
+                switch result {
+                case .success(let name):
+                    self.statusLine = "完成"
+                    self.lastFinishedName = name
+                    Notify.send(title: "下载完成", body: name, fileDir: self.saveDir)
+                case .failure(let msg):
+                    self.statusLine = ""
+                    self.lastError = msg
+                }
+            }
+        }
     }
 
     func cancelDownload() {
