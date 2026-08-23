@@ -5,7 +5,7 @@
 <h1 align="center">VideoGrab</h1>
 
 <p align="center">
-  一个轻量的 macOS 菜单栏小工具：<strong>粘贴链接，一键下载 B站、新片场、小红书、YouTube 视频</strong>。
+  一个轻量的 macOS 菜单栏小工具：<strong>复制视频链接，打开即可下载到本地</strong>。
 </p>
 
 <p align="center">
@@ -23,18 +23,31 @@
   <img src="docs/screenshot.png" width="380" alt="VideoGrab 截图">
 </p>
 
-它常驻菜单栏，打开面板后粘贴（或自动识别剪贴板里的）视频链接，选择画质，即可下载到本地。内置 yt-dlp + ffmpeg，自动处理国内/国外站点的网络分流。
+它常驻菜单栏。复制视频链接，打开面板（会自动填入），选择画质，即可下载到本地。内置 yt-dlp + ffmpeg，自动处理国内/国外站点的网络分流。
 
 - 🪶 **轻巧**：原生 Swift + SwiftUI，无第三方依赖
-- 🔗 **多站点**：B站、新片场、小红书、YouTube（含短链 `b23.tv` / `xhslink.com` / `youtu.be`）
+- 🔗 **常见视频网站**：内置下载引擎；个别站点走专用解析。视频号能识别，但不支持下载
 - 🌐 **智能分流**：国内站强制直连，国外站自动探测本地 Clash 代理端口
-- 🍪 **登录态**：B站 / 小红书自动读取 Chrome Cookie，无需手动导出
+- 🍪 **登录态**：需要登录才能稳定下载的站点，自动读取本机 Chrome Cookie
 - 📋 **剪贴板预填**：打开面板时自动识别剪贴板中的视频链接
 - 📊 **进度与通知**：实时进度条，完成后系统通知，点击打开保存目录
 
 > 📦 **直接下载**：前往 [Releases](https://github.com/aright8-sys/VideoGrab/releases/latest) 下载打包好的 `VideoGrab.zip`，或按下方说明自行构建。
 
 ## 🆕 更新日志
+
+### v2.2 — Vimeo 下载与稳定性加固
+
+- 🎬 **新增 Vimeo 下载**：普通下载路已被挡住，改为用本机 Chrome 过验证、再把分片拼成文件（需要装着 Google Chrome）。
+- ⚡ **Vimeo 更快、更省内存**：分片 4 路并发、边下边写硬盘——长视频不再把整部片子先塞进内存；标题就绪即取，不再空等，也不会把 Cloudflare 挑战页的「Just a moment…」当成文件名。
+- 📌 **Pinterest**：原生视频照常下；里面嵌的 Vimeo 会自动转过去。
+- 💬 **微信视频号**：认得出是哪条，并明确告诉你下不了（没有公开下载接口）。
+- 🛡️ **代理识别防误判**：探测到本地代理端口后，先代发一次真实请求确认它真是代理再使用——8080/8888 上恰好跑着的其它本地程序不会再被误当成 Clash，导致国外站全部失败。
+- 🔒 **网站与链接识别更严格**：站点域名改为后缀精确匹配，「bilibili.com.evil.com」这类伪装域名不再被误判成 B 站而强制直连；剪贴板链接只认合法 URL 字符——聊天软件里「链接后紧跟中文、无空格」曾把整句话吞进网址导致失败，现在从第一个非法字符处截断。
+- 🔄 **ffmpeg 跟随 App 更新**：用户目录里的 ffmpeg 加了版本指纹，升级 App 后自动换新，不再永远停在首装版本；yt-dlp 依旧走「更新内核」自我升级、绝不被覆盖。
+- 🧵 **修复两处小概率状态错乱**：通知跳转目录加锁防并发读写；取消下载后旧任务的迟到回调一律作废——手快立刻开新下载，进度和结果也不会互相污染。
+- 📦 **构建可复现**：`build-app.sh` 锁定 yt-dlp / ffmpeg 版本号并以 sha256 指纹校验，文件不完整或被篡改时构建直接终止，已有内核指纹不符会自动重新拉取正确版本。
+- ✅ **新增自动化测试**：13 条测试钉住各站点解析逻辑（域名匹配 / 链接剪裁 / 进度解析 / 新片场画质选择 / 微信短链 / Pinterest→Vimeo 判定 / Vimeo 清单解析），改完代码跑一次 `swift test` 即知有没有改坏。
 
 ### v2.1 — 修复新片场下载
 
@@ -61,7 +74,7 @@
 >
 > **数据流向**：
 > - **下载过程**：在本机调用 yt-dlp，视频文件保存到你指定的本地目录。
-> - **登录 Cookie**：仅在下载 B站 / 小红书时，从本机 Chrome 浏览器读取登录 Cookie，不上传、不外发。
+> - **登录 Cookie**：仅在下载需要登录态的站点时，从本机 Chrome 浏览器读取登录 Cookie，不上传、不外发。
 > - **内核更新**：「更新内核」会从 GitHub 拉取最新 yt-dlp（国外站点，走本地代理）。
 >
 > 仅供个人学习与自用，**请自行评估并承担使用风险，遵守平台条款与版权法**。
@@ -72,12 +85,13 @@
 
 不同站点对代理的需求相反，App 会按目标域名自动选择：
 
-| 站点 | 走法 |
+| 类型 | 走法 |
 | --- | --- |
-| 新片场 | 直连 |
-| B站 | 直连 + Chrome Cookie |
-| 小红书 | 直连 + Chrome Cookie |
-| YouTube | 走本地 Clash 代理（7897/7890 等） |
+| 国内站 | 直连 |
+| 需登录的站 | 自动读取 Chrome Cookie |
+| 国外站 | 走本地 Clash 代理（7897/7890 等） |
+| Vimeo | 本机 Chrome 解析（yt-dlp 提取器已坏） |
+| 视频号 | 识别标题，不提供下载 |
 
 App 启动时会清理继承来的 `*_proxy` 环境变量，避免 GUI 与终端行为不一致。
 
@@ -111,6 +125,7 @@ cp -r VideoGrab.app /Applications/   # 安装（可选）
 
 ```bash
 swift build               # 仅编译
+swift test                # 跑解析器测试
 ```
 
 ## 使用
@@ -118,20 +133,27 @@ swift build               # 仅编译
 1. 启动后点击菜单栏的 ⬇️ 图标。
 2. 复制视频链接，打开面板（会自动填入剪贴板中的链接）。
 3. 选择画质，点击「下载」。
-4. **B站 / 小红书首次使用**：若弹出「Chrome Safe Storage」钥匙串窗口，点「始终允许」+ 输入开机密码（只需一次）。部分需登录可见的内容，请先在 Chrome 里登录对应网站。
-5. **YouTube**：需先启动本地 Clash 等代理。
+4. **需要登录的内容**：若弹出「Chrome Safe Storage」钥匙串窗口，点「始终允许」+ 输入开机密码（只需一次）；请先在 Chrome 里登录对应网站。
+5. **YouTube 等国外站**：需先启动本地 Clash 等代理。
+6. **Vimeo**：需要本机装着 Google Chrome。
+7. **微信视频号**：暂不支持下载。
 
 ## 目录结构
 
 ```
 Sources/VideoGrab/
-  VideoGrabApp.swift   App 入口 + MenuBarExtra
-  AppState.swift       状态管理、剪贴板预填、下载调度
-  Downloader.swift     yt-dlp 封装、代理分流、进度解析
-  Sites.swift          受支持站点域名
-  PopoverView.swift    弹出面板 UI
-  Notify.swift         下载完成系统通知
-build-app.sh           打包脚本（下载内核 + 写入 LSUIElement）
+  VideoGrabApp.swift    App 入口 + MenuBarExtra
+  AppState.swift        状态管理、剪贴板预填、下载调度
+  Downloader.swift      yt-dlp 封装、代理分流、进度解析
+  Sites.swift           站点识别与链接剪裁
+  PopoverView.swift     弹出面板 UI
+  Notify.swift          下载完成系统通知
+  VimeoDownloader.swift Vimeo 专用（Chrome + 分片重组）
+  ChromeCDP.swift       无头 Chrome 调试协议
+  PinterestResolver.swift  Pinterest → Vimeo 判定
+  WechatChannels.swift  视频号识别（不下）
+  Xinpianchang.swift    新片场直链解析
+build-app.sh            打包脚本（下载内核 + 写入 LSUIElement）
 ```
 
 ## 许可证

@@ -10,28 +10,38 @@ BUILD_DIR=".build/${CONFIG}"
 APP_BUNDLE="${APP_NAME}.app"
 BIN_DIR="Resources/bin"
 
-YTDLP_URL="https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos"
-# 单文件静态 ffmpeg（Apple Silicon），来自 ffmpeg-static 发布页
-FFMPEG_URL="https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0/ffmpeg-darwin-arm64"
+# 内核版本与 sha256 指纹锁定：保证每次构建拿到完全相同、未被篡改的二进制。
+# 升级时改版本号；指纹取 GitHub release 页 asset 的 digest 字段（或下载后 shasum -a 256 现算）。
+YTDLP_VERSION="2026.08.19"
+YTDLP_SHA256="0f192b7ec147ab6288885d6351d9ab67367640029b4377576ef46dd79cf7b202"
+FFMPEG_VERSION="b6.0"   # 单文件静态 ffmpeg（Apple Silicon），来自 ffmpeg-static 发布页
+FFMPEG_SHA256="a90e3db6a3fd35f6074b013f948b1aa45b31c6375489d39e572bea3f18336584"
+
+YTDLP_URL="https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp_macos"
+FFMPEG_URL="https://github.com/eugeneware/ffmpeg-static/releases/download/${FFMPEG_VERSION}/ffmpeg-darwin-arm64"
 
 echo "==> 准备下载内核到 ${BIN_DIR}"
 mkdir -p "${BIN_DIR}"
 
-if [ ! -f "${BIN_DIR}/yt-dlp" ]; then
-    echo "    下载 yt-dlp…"
-    curl -fL --retry 3 -o "${BIN_DIR}/yt-dlp" "${YTDLP_URL}"
-    chmod +x "${BIN_DIR}/yt-dlp"
-else
-    echo "    yt-dlp 已存在，跳过（如需升级用 App 内「更新内核」）"
-fi
+# 校验并按需下载：已有文件指纹不符（半截下载/被改动）也会重新拉取
+fetch_kernel() {
+    local name="$1" url="$2" want="$3" dest="$4"
+    if [ -f "${dest}" ]; then
+        if echo "${want}  ${dest}" | shasum -a 256 -c - >/dev/null 2>&1; then
+            echo "    ${name} 已存在且指纹匹配，跳过"
+            return 0
+        fi
+        echo "    ${name} 已存在但指纹不符，重新下载…"
+        rm -f "${dest}"
+    fi
+    echo "    下载 ${name}…"
+    curl -fL --retry 3 -o "${dest}" "${url}"
+    echo "${want}  ${dest}" | shasum -a 256 -c -   # 指纹不符会非零退出，set -e 直接终止构建
+    chmod +x "${dest}"
+}
 
-if [ ! -f "${BIN_DIR}/ffmpeg" ]; then
-    echo "    下载 ffmpeg…"
-    curl -fL --retry 3 -o "${BIN_DIR}/ffmpeg" "${FFMPEG_URL}"
-    chmod +x "${BIN_DIR}/ffmpeg"
-else
-    echo "    ffmpeg 已存在，跳过"
-fi
+fetch_kernel "yt-dlp" "${YTDLP_URL}" "${YTDLP_SHA256}" "${BIN_DIR}/yt-dlp"
+fetch_kernel "ffmpeg" "${FFMPEG_URL}" "${FFMPEG_SHA256}" "${BIN_DIR}/ffmpeg"
 
 # 去除可能的隔离属性
 xattr -dr com.apple.quarantine "${BIN_DIR}" 2>/dev/null || true
@@ -75,9 +85,9 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" <<PLIST
     <key>CFBundleIdentifier</key>
     <string>com.local.${APP_NAME}</string>
     <key>CFBundleVersion</key>
-    <string>2.0.0</string>
+    <string>2.2.0</string>
     <key>CFBundleShortVersionString</key>
-    <string>2.0.0</string>
+    <string>2.2.0</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>

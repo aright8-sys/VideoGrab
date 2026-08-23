@@ -76,7 +76,7 @@ enum XinpianchangResolver {
 
     // 主作品对象形如 "video":{"isNewModServer":true,"appKey":"xx","type":1,"vid":"yy",...}
     // 推荐视频在 "others" 里，别混：只在 "video":{...} 这个块内取
-    private static func extractVidAppKey(_ html: String) -> (vid: String, appKey: String)? {
+    static func extractVidAppKey(_ html: String) -> (vid: String, appKey: String)? {
         let ns = html as NSString
         guard let blockRe = try? NSRegularExpression(pattern: #""video":\{([^}]*)\}"#),
               let bm = blockRe.firstMatch(in: html, range: NSRange(location: 0, length: ns.length)),
@@ -88,7 +88,7 @@ enum XinpianchangResolver {
     }
 
     // 服务端已按 height 分档；4k/1080p 常为会员专享(url 为空)，只选有直链、不超过所选画质的最高档
-    private static func pickMP4(_ data: Data, quality: Quality) -> Resolved? {
+    static func pickMP4(_ data: Data, quality: Quality) -> Resolved? {
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let d = obj["data"] as? [String: Any],
               let res = d["resource"] as? [String: Any],

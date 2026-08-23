@@ -10,6 +10,11 @@ let package = Package(
         .executableTarget(
             name: "VideoGrab",
             path: "Sources/VideoGrab"
-        )
+        ),
+        .testTarget(
+            name: "VideoGrabTests",
+            dependencies: ["VideoGrab"],
+            path: "Tests/VideoGrabTests"
+        ),
     ]
 )

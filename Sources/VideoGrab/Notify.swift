@@ -5,6 +5,7 @@ import UserNotifications
 // 完成通知。点按通知会在访达里打开保存目录。
 final class Notify: NSObject, UNUserNotificationCenterDelegate {
     static let shared = Notify()
+    private let dirLock = NSLock()   // lastDir 在主线程写、系统通知队列读，需要互斥
     private var lastDir: URL?
     private var ready = false
 
@@ -26,7 +27,7 @@ final class Notify: NSObject, UNUserNotificationCenterDelegate {
     }
 
     private func post(title: String, body: String, fileDir: URL?) {
-        lastDir = fileDir
+        dirLock.lock(); lastDir = fileDir; dirLock.unlock()
         // 没有通知权限（或非打包运行）时，退化为不打扰，避免崩溃
         guard Bundle.main.bundleIdentifier != nil else { return }
         let content = UNMutableNotificationContent()
@@ -48,7 +49,8 @@ final class Notify: NSObject, UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
-        if let dir = lastDir {
+        dirLock.lock(); let dir = lastDir; dirLock.unlock()
+        if let dir {
             NSWorkspace.shared.open(dir)
         }
         completionHandler()

@@ -52,6 +52,7 @@ enum DownloadResult {
 final class Downloader {
     private var process: Process?
     private var directDownloader: DirectDownloader?
+    private var vimeoDownloader: VimeoDownloader?
     private let appSupportBin: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return base.appendingPathComponent("VideoGrab/bin", isDirectory: true)
@@ -86,12 +87,40 @@ final class Downloader {
     // 国外站点（YouTube 等）必须走本地代理——直连会超时。
     // GUI App 不继承 shell 的 *_proxy 环境变量，所以这里自动探测本地代理端口。
 
-    // 探测常见的本地代理端口（Clash/mihomo 默认 7897/7890 等）
-    private func detectLocalProxy() -> String? {
-        for port in [7897, 7890, 7891, 1087, 8080, 8888] {
-            if Self.isPortOpen(port: port) { return "http://127.0.0.1:\(port)" }
+    // 探测常见的本地代理端口（Clash/mihomo 默认 7897/7890 等）。
+    // 端口通 ≠ 是代理：8080/8888 上任何一个本地开发服务器都会造成误判，
+    // 导致国外站全走错路。所以对每个开放端口再发一次真实请求验证它能转发 HTTP。
+    private func detectLocalProxy(_ done: @escaping (String?) -> Void) {
+        let candidates = [7897, 7890, 7891, 1087, 8080, 8888]
+        func check(_ i: Int) {
+            guard i < candidates.count else { done(nil); return }
+            let port = candidates[i]
+            guard Self.isPortOpen(port: port) else { check(i + 1); return }
+            Self.verifyProxyPort(port: port) { ok in
+                ok ? done("http://127.0.0.1:\(port)") : check(i + 1)
+            }
         }
-        return nil
+        check(0)
+    }
+
+    // 让候选端口代发一次真实请求：能带回 HTTP 响应即为可用代理；
+    // 普通网站服务器处理不了代理式请求，必然报错，借此与真代理区分。
+    private static func verifyProxyPort(port: Int, done: @escaping (Bool) -> Void) {
+        guard let url = URL(string: "http://www.gstatic.com/generate_204") else { done(false); return }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 4
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 4
+        cfg.connectionProxyDictionary = [
+            kCFNetworkProxiesHTTPEnable as String: 1,
+            kCFNetworkProxiesHTTPProxy as String: "127.0.0.1",
+            kCFNetworkProxiesHTTPPort as String: port,
+        ]
+        let s = URLSession(configuration: cfg)
+        s.dataTask(with: req) { _, resp, err in
+            done(err == nil && resp is HTTPURLResponse)
+            s.finishTasksAndInvalidate()
+        }.resume()
     }
 
     private static func isPortOpen(port: Int) -> Bool {
@@ -110,11 +139,12 @@ final class Downloader {
         return r == 0   // 本地连接会立即成功或被拒绝，无需超时控制
     }
 
-    // 按目标主机决定 --proxy 参数
-    private func proxyArgs(forHost host: String) -> [String]? {
-        if Sites.isCNHost(host) { return ["--proxy", ""] }      // 直连
-        if let p = detectLocalProxy() { return ["--proxy", p] } // 走本地代理
-        return nil                                                // 国外站且未探测到代理
+    // 按目标主机决定 --proxy 参数（异步：探测代理要发真实请求验证）
+    private func proxyArgs(forHost host: String, _ done: @escaping ([String]?) -> Void) {
+        if Sites.isCNHost(host) { done(["--proxy", ""]); return }   // 直连
+        detectLocalProxy { p in
+            done(p.map { ["--proxy", $0] })                        // 走本地代理；探测不到给 nil
+        }
     }
 
     // 去掉继承来的代理环境变量，让 --proxy 参数说了算（行为与启动方式无关）
@@ -125,9 +155,12 @@ final class Downloader {
                   "CLASH_PROXY"] {
             env[k] = nil
         }
-        if let ff = ffmpegDir() {
-            env["PATH"] = ff + ":" + (env["PATH"] ?? "/usr/bin:/bin")
-        }
+        // yt-dlp 解 YouTube nsig 挑战需要 JS 运行时(deno)；Finder 启动的 GUI 不继承 homebrew PATH，手动补上，否则 YouTube 报「This video is not available」
+        var paths: [String] = []
+        if let ff = ffmpegDir() { paths.append(ff) }
+        paths += ["/opt/homebrew/bin", "/usr/local/bin", NSHomeDirectory() + "/.deno/bin"]
+        paths.append(env["PATH"] ?? "/usr/bin:/bin")
+        env["PATH"] = paths.joined(separator: ":")
         return env
     }
 
@@ -153,7 +186,15 @@ final class Downloader {
             let src = bundledDir.appendingPathComponent(name)
             guard fm.isExecutableFile(atPath: src.path) else { continue }
             let dst = appSupportBin.appendingPathComponent(name)
-            if fm.fileExists(atPath: dst.path) { continue } // 已存在不覆盖；yt-dlp 升级走「更新内核」
+            if fm.fileExists(atPath: dst.path) {
+                if name == "yt-dlp" { continue } // yt-dlp 可自更新，绝不覆盖（升级走「更新内核」）
+                // ffmpeg 没有自更新通道：不处理的话用户目录里永远停在首装版本。
+                // App 升级后打包版本变了（大小不同作指纹）就覆盖。
+                let srcSize = (try? fm.attributesOfItem(atPath: src.path)[.size]) as? Int
+                let dstSize = (try? fm.attributesOfItem(atPath: dst.path)[.size]) as? Int
+                if srcSize != nil, srcSize == dstSize { continue }
+            }
+            try? fm.removeItem(at: dst)
             try? fm.copyItem(at: src, to: dst)
             try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dst.path)
         }
@@ -176,100 +217,102 @@ final class Downloader {
         let normalized = url.trimmingCharacters(in: .whitespacesAndNewlines)
         let host = URL(string: normalized)?.host ?? ""
 
-        guard let proxy = proxyArgs(forHost: host) else {
-            onFinish(.failure("YouTube 等国外站点需要本地代理（Clash 等）。请先启动代理，或确认端口为 7897/7890。"))
-            return
-        }
-
-        var args = quality.formatArgs
-        args += proxy
-        // B站/小红书需要登录态才能过风控/拿高清，自动读 Chrome Cookie
-        if Sites.needsCookies(host) {
-            args += ["--cookies-from-browser", "chrome"]
-        }
-        args += ["--newline", "--no-playlist",
-                 "--socket-timeout", "30", "--retries", "5", "--fragment-retries", "5",
-                 "-o", saveDir.appendingPathComponent("%(title)s.%(ext)s").path]
-        if let ff = ffmpegDir() {
-            args += ["--ffmpeg-location", ff]
-        }
-        args.append(normalized)
-
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: ytDlp)
-        proc.arguments = args
-        proc.environment = cleanedEnv()
-
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = pipe
-
-        var finalName = ""
-        var tail: [String] = []   // 保留最后若干行用于报错
-        var lastError = ""        // 单独记下 ERROR 行，报错时优先展示
-        var buffer = Data()
-        // 所有输出解析串行化到这条队列，避免 readability/termination 两处竞争 buffer
-        let outQueue = DispatchQueue(label: "com.local.VideoGrab.output")
-
-        func handleLine(_ raw: String) {
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return }
-            tail.append(trimmed)
-            if tail.count > 20 { tail.removeFirst() }
-            if trimmed.hasPrefix("ERROR") { lastError = trimmed }
-            if let name = Self.parseDestination(trimmed) { finalName = name }
-
-            if let pct = Self.parsePercent(trimmed) {
-                onProgress(pct, trimmed)
-            } else if trimmed.hasPrefix("[") || trimmed.hasPrefix("ERROR") {
-                onProgress(nil, trimmed)
+        proxyArgs(forHost: host) { proxy in
+            guard let proxy else {
+                onFinish(.failure("YouTube 等国外站点需要本地代理（Clash 等）。请先启动代理，或确认端口为 7897/7890。"))
+                return
             }
-        }
 
-        // yt-dlp 进度用 \r，普通日志用 \n —— 两者都当分隔符；flushAll 时把残余当作最后一行
-        func drain(_ data: Data, flushAll: Bool) {
-            buffer.append(data)
-            while let idx = buffer.firstIndex(where: { $0 == 0x0A || $0 == 0x0D }) {
-                let lineData = buffer.subdata(in: buffer.startIndex..<idx)
-                buffer.removeSubrange(buffer.startIndex...idx)
-                if let line = String(data: lineData, encoding: .utf8) { handleLine(line) }
+            var args = quality.formatArgs
+            args += proxy
+            // B站/小红书/Instagram 需要登录态才能过风控/拿高清，自动读 Chrome Cookie
+            if Sites.needsCookies(host) {
+                args += ["--cookies-from-browser", "chrome"]
             }
-            if flushAll, !buffer.isEmpty {
-                if let line = String(data: buffer, encoding: .utf8) { handleLine(line) }
-                buffer.removeAll()
+            args += ["--newline", "--no-playlist",
+                     "--socket-timeout", "30", "--retries", "5", "--fragment-retries", "5",
+                     "-o", saveDir.appendingPathComponent("%(title)s.%(ext)s").path]
+            if let ff = self.ffmpegDir() {
+                args += ["--ffmpeg-location", ff]
             }
-        }
+            args.append(normalized)
 
-        let handle = pipe.fileHandleForReading
-        handle.readabilityHandler = { fh in
-            let chunk = fh.availableData
-            guard !chunk.isEmpty else { return }
-            outQueue.async { drain(chunk, flushAll: false) }
-        }
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: ytDlp)
+            proc.arguments = args
+            proc.environment = self.cleanedEnv()
 
-        proc.terminationHandler = { p in
-            handle.readabilityHandler = nil
-            let rest = (try? handle.readToEnd()) ?? Data()   // 排空残余，确保最后的 ERROR 行不丢
-            outQueue.async {
-                drain(rest, flushAll: true)
-                if p.terminationStatus == 0 {
-                    onFinish(.success(finalName.isEmpty ? "下载完成" : finalName))
-                } else if p.terminationStatus == 15 || p.terminationStatus == 9 {
-                    // 被取消，不回调
-                } else if !lastError.isEmpty {
-                    onFinish(.failure(lastError))
-                } else {
-                    let msg = tail.suffix(6).joined(separator: "\n")
-                    onFinish(.failure(msg.isEmpty ? "下载失败（退出码 \(p.terminationStatus)）" : msg))
+            let pipe = Pipe()
+            proc.standardOutput = pipe
+            proc.standardError = pipe
+
+            var finalName = ""
+            var tail: [String] = []   // 保留最后若干行用于报错
+            var lastError = ""        // 单独记下 ERROR 行，报错时优先展示
+            var buffer = Data()
+            // 所有输出解析串行化到这条队列，避免 readability/termination 两处竞争 buffer
+            let outQueue = DispatchQueue(label: "com.local.VideoGrab.output")
+
+            func handleLine(_ raw: String) {
+                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return }
+                tail.append(trimmed)
+                if tail.count > 20 { tail.removeFirst() }
+                if trimmed.hasPrefix("ERROR") { lastError = trimmed }
+                if let name = Self.parseDestination(trimmed) { finalName = name }
+
+                if let pct = Self.parsePercent(trimmed) {
+                    onProgress(pct, trimmed)
+                } else if trimmed.hasPrefix("[") || trimmed.hasPrefix("ERROR") {
+                    onProgress(nil, trimmed)
                 }
             }
-        }
 
-        do {
-            try proc.run()
-            self.process = proc
-        } catch {
-            onFinish(.failure("启动失败：\(error.localizedDescription)"))
+            // yt-dlp 进度用 \r，普通日志用 \n —— 两者都当分隔符；flushAll 时把残余当作最后一行
+            func drain(_ data: Data, flushAll: Bool) {
+                buffer.append(data)
+                while let idx = buffer.firstIndex(where: { $0 == 0x0A || $0 == 0x0D }) {
+                    let lineData = buffer.subdata(in: buffer.startIndex..<idx)
+                    buffer.removeSubrange(buffer.startIndex...idx)
+                    if let line = String(data: lineData, encoding: .utf8) { handleLine(line) }
+                }
+                if flushAll, !buffer.isEmpty {
+                    if let line = String(data: buffer, encoding: .utf8) { handleLine(line) }
+                    buffer.removeAll()
+                }
+            }
+
+            let handle = pipe.fileHandleForReading
+            handle.readabilityHandler = { fh in
+                let chunk = fh.availableData
+                guard !chunk.isEmpty else { return }
+                outQueue.async { drain(chunk, flushAll: false) }
+            }
+
+            proc.terminationHandler = { p in
+                handle.readabilityHandler = nil
+                let rest = (try? handle.readToEnd()) ?? Data()   // 排空残余，确保最后的 ERROR 行不丢
+                outQueue.async {
+                    drain(rest, flushAll: true)
+                    if p.terminationStatus == 0 {
+                        onFinish(.success(finalName.isEmpty ? "下载完成" : finalName))
+                    } else if p.terminationStatus == 15 || p.terminationStatus == 9 {
+                        // 被取消，不回调
+                    } else if !lastError.isEmpty {
+                        onFinish(.failure(lastError))
+                    } else {
+                        let msg = tail.suffix(6).joined(separator: "\n")
+                        onFinish(.failure(msg.isEmpty ? "下载失败（退出码 \(p.terminationStatus)）" : msg))
+                    }
+                }
+            }
+
+            do {
+                try proc.run()
+                self.process = proc
+            } catch {
+                onFinish(.failure("启动失败：\(error.localizedDescription)"))
+            }
         }
     }
 
@@ -288,11 +331,27 @@ final class Downloader {
         dd.start(url: mp4, onProgress: onProgress, onFinish: onFinish)
     }
 
+    // Vimeo 专用（yt-dlp 的 Vimeo 提取器已坏）：无头 Chrome 过验证 + DASH 分片重组
+    func downloadVimeo(url: String, quality: Quality, saveDir: URL,
+                       onProgress: @escaping (Double?, String?) -> Void,
+                       onFinish: @escaping (DownloadResult) -> Void) {
+        guard let ffmpeg = ffmpegDir().map({ $0 + "/ffmpeg" }) else {
+            onFinish(.failure("找不到 ffmpeg，请重新构建 App。"))
+            return
+        }
+        let vd = VimeoDownloader()
+        self.vimeoDownloader = vd
+        vd.start(url: url, quality: quality, saveDir: saveDir, ffmpeg: ffmpeg,
+                 onProgress: onProgress, onFinish: onFinish)
+    }
+
     func cancel() {
         process?.terminate()
         process = nil
         directDownloader?.cancel()
         directDownloader = nil
+        vimeoDownloader?.cancel()
+        vimeoDownloader = nil
     }
 
     // MARK: - 内核版本 / 更新
@@ -307,11 +366,13 @@ final class Downloader {
     func updateCore(_ done: @escaping (String) -> Void) {
         guard let ytDlp = ytDlpPath() else { done("找不到 yt-dlp"); return }
         // yt-dlp -U 从 GitHub 拉更新，属国外站点，走本地代理（探测不到则直连）
-        var args = ["-U"]
-        if let p = detectLocalProxy() { args += ["--proxy", p] }
-        runCapture(exe: ytDlp, args: args) { out, code in
-            let last = out.split(separator: "\n").last.map(String.init) ?? out
-            done(code == 0 ? "内核已是最新或已更新：\(last)" : "更新失败：\(last)")
+        detectLocalProxy { p in
+            var args = ["-U"]
+            if let p { args += ["--proxy", p] }
+            self.runCapture(exe: ytDlp, args: args) { out, code in
+                let last = out.split(separator: "\n").last.map(String.init) ?? out
+                done(code == 0 ? "内核已是最新或已更新：\(last)" : "更新失败：\(last)")
+            }
         }
     }
 

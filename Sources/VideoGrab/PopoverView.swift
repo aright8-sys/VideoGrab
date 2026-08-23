@@ -90,7 +90,7 @@ struct PopoverView: View {
             Image(systemName: "link")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.secondary)
-            TextField("粘贴 新片场 / YouTube / B站 / 小红书 链接", text: $state.url)
+            TextField("视频链接", text: $state.url)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .disabled(state.isDownloading)
