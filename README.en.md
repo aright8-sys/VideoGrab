@@ -29,15 +29,25 @@ It lives in your menu bar. Copy a video URL, open the panel (it auto-fills), pic
 - 🔗 **Common video sites** — built-in engine, plus dedicated parsers where needed. WeChat Channels is recognized but not downloadable
 - 🌐 **Smart routing** — CN sites connect directly; overseas sites auto-detect local Clash proxy ports
 - 🍪 **Login cookies** — sites that need a login read Chrome cookies automatically
-- 📋 **Clipboard prefill** — detects video URLs from clipboard when the panel opens
+- 📋 **Clipboard auto-collect** — a persistent clipboard watcher adds every video URL you copy in the browser straight to the download list; pasting a whole block of links works too, duplicates are ignored
+- 📚 **Batch download queue** — multiple links download one by one with "n of N" progress; a single failure doesn't break the queue, and you get exactly one notification at the end
 - 📊 **Progress & notify** — live progress bar; system notification on completion; click to open save folder
+- 🔍 **Check for updates** — one click queries GitHub Releases and jumps to the download page when a new version is out
 
 > 📦 **Download**: grab the prebuilt `VideoGrab.zip` from [Releases](https://github.com/aright8-sys/VideoGrab/releases/latest), or build it yourself (see below).
 
 ## 🆕 Changelog
 
-### v2.2 — Vimeo downloads & hardening
+### v2.3 — Batch queue & clipboard auto-collect
 
+- 📚 **Batch download queue** — paste multiple links at once and they download sequentially. The progress card shows "item n of N"; one failed link doesn't stop the queue. You get a single system notification at the end ("queue finished" or "X succeeded, Y failed"), and the result card lists failed links, copyable.
+- 📋 **Clipboard auto-collect** — the app watches the clipboard in the background: every URL you copy in the browser lands in the download list automatically, no need to open the panel or paste manually. Copying a whole block of links from a text file works as well (one per line or inline). Duplicate copies count once.
+- 🔢 **List-style link input** — each link is its own row with a numbered badge and a hairline divider, with a live counter in the footer strip. Rows are editable inline; pasting a multi-line block into a row splits it automatically. When the list grows past the available screen height it folds into a scroll area (height adapts to your screen) while the counter strip stays visible.
+- 🔍 **Check for updates** — a new "Check for updates" button in the bottom-right queries GitHub Releases; a new version pops a banner that opens the download page, otherwise you get a brief "already latest" note.
+- 🧹 **Single-link behavior unchanged** — with one link everything works exactly as before, including the single "download complete" notification.
+
+
+### v2.2 — Vimeo downloads & hardening
 - 🎬 **Vimeo downloads** — the usual extractor is blocked; VideoGrab uses local Chrome to pass the challenge and reassembles DASH segments (Google Chrome must be installed).
 - ⚡ **Faster, leaner Vimeo** — segments fetch four at a time and stream to disk (long videos no longer sit entirely in memory); the title is taken as soon as it's ready, and Cloudflare challenge titles ("Just a moment…") never become the filename.
 - 📌 **Pinterest** — native pins still go through yt-dlp; embedded Vimeo pins are handed to the Vimeo parser.
@@ -78,6 +88,7 @@ A major release with a fully reworked interface and experience:
 > - **Login cookies**: read from your local Chrome browser only when a site needs a login session;
 >   never uploaded or sent elsewhere.
 > - **Core updates**: "Update core" fetches the latest yt-dlp from GitHub (overseas; uses local proxy).
+> - **Update check**: queries the GitHub API for the latest version number — read-only; nothing is uploaded.
 >
 > For personal, educational use only — **use at your own risk and respect platform ToS and copyright law**.
 
@@ -106,6 +117,15 @@ On first run they are copied to `~/Library/Application Support/VideoGrab/bin/` (
 
 The "Update core" button at the bottom of the panel upgrades the **yt-dlp** download engine. VideoGrab itself is only the GUI shell — yt-dlp (with ffmpeg) does the actual page parsing, stream fetching, and muxing, hence the "core". Video sites change their pages and anti-bot measures often, which can break an older yt-dlp. **When a link suddenly fails to download, click "Update core" first**: it runs `yt-dlp -U`, self-updates the writable copy in Application Support (no reinstall needed), uses your local proxy or a direct connection automatically, and shows the new version when done.
 
+### What is "Check for updates"?
+
+The "Check for updates" button in the bottom-right upgrades VideoGrab itself. It queries GitHub Releases for the latest version and compares it with the local one:
+
+- **New version available**: a banner appears in the panel; click it to open the Release download page, then replace the app.
+- **Already up to date**: a brief note with the current version.
+- The query goes to the GitHub API (overseas; uses your local proxy or a direct connection automatically). The anonymous API allows 60 requests/hour — plenty for manual checks.
+
+
 ## Build & run
 
 Requires macOS 14+ and a Swift toolchain (Xcode or the Command Line Tools is enough — you don't need to
@@ -117,8 +137,6 @@ open VideoGrab.app        # run
 cp -r VideoGrab.app /Applications/   # install (optional)
 ```
 
-Development:
-
 ```bash
 swift build               # compile only
 swift test                # parser tests
@@ -127,24 +145,26 @@ swift test                # parser tests
 ## Usage
 
 1. After launching, click the ⬇️ icon in the menu bar.
-2. Copy a video URL; open the panel (clipboard URL is auto-filled).
-3. Pick a quality and click "Download".
+2. Copy a video URL — one or many; copying a whole block from a text file works too. Links are collected into the panel's list automatically, no manual pasting needed.
+3. Pick a quality and click "Download". With multiple links the button shows the count and downloads them as a queue, notifying you once at the end.
 4. **Login-gated content**: if a "Chrome Safe Storage" Keychain prompt appears, click
    "Always Allow" and enter your password (once only). Sign in to the site in Chrome first.
 5. **YouTube and other overseas sites**: start your local Clash (or similar) proxy first.
 6. **Vimeo**: Google Chrome must be installed.
 7. **WeChat Channels**: download is not supported.
+8. **Check for updates**: use the "Check for updates" button in the bottom-right of the panel.
 
 ## Project layout
 
 ```
 Sources/VideoGrab/
   VideoGrabApp.swift       App entry + MenuBarExtra
-  AppState.swift           State, clipboard prefill, download scheduling
+  AppState.swift           State, clipboard auto-collect, batch queue scheduling
   Downloader.swift         yt-dlp wrapper, proxy routing, progress parsing
   Sites.swift              Site matching and URL trimming
   PopoverView.swift        Popover panel UI
   Notify.swift             Download-complete notifications
+  UpdateChecker.swift      GitHub Releases update check
   VimeoDownloader.swift    Vimeo (Chrome + segment reassembly)
   ChromeCDP.swift          Headless Chrome DevTools Protocol
   PinterestResolver.swift  Pinterest → Vimeo detection

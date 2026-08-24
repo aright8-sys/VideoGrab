@@ -42,20 +42,30 @@ enum Sites {
         isBilibili(host) || isXiaohongshu(host) || isInstagram(host)
     }
 
-    // 剪贴板里取第一个 http(s) 链接——不再按站点白名单过滤，任何网址都自动预填。
-    // 具体能不能下载由 startDownload 里的路由决定（yt-dlp 通用 + 各站专用解析器）。
-    static func firstURL(in text: String) -> String? {
-        guard let re = try? NSRegularExpression(pattern: clipboardPattern) else { return nil }
+    // 提取文本里全部 http(s) 链接：去重保序、剪掉句读尾巴。批量队列下载的入口。
+    static func allURLs(in text: String) -> [String] {
+        guard let re = try? NSRegularExpression(pattern: clipboardPattern) else { return [] }
         let ns = text as NSString
         let found = re.matches(in: text, range: NSRange(location: 0, length: ns.length))
-        guard let m = found.first else { return nil }
-        var url = ns.substring(with: m.range)
         // 中文输入法/聊天软件常在链接后粘句读（「https://vimeo.com/123。」）。
         // 这些字符不可能是合法结尾，直接剪掉；括号除外（维基类 URL 以 ) 结尾是合法的）。
         let junk = CharacterSet(charactersIn: "。，、；！？：）》」』】“”‘’…·,.!?;:")
-        while let last = url.unicodeScalars.last, junk.contains(last) {
-            url.removeLast()
+        var seen = Set<String>()
+        var urls: [String] = []
+        for m in found {
+            var url = ns.substring(with: m.range)
+            while let last = url.unicodeScalars.last, junk.contains(last) {
+                url.removeLast()
+            }
+            if !url.isEmpty, seen.insert(url).inserted {
+                urls.append(url)
+            }
         }
-        return url.isEmpty ? nil : url
+        return urls
+    }
+
+    // 剪贴板取第一个 http(s) 链接——不再按站点白名单过滤，任何网址都自动预填。
+    static func firstURL(in text: String) -> String? {
+        allURLs(in: text).first
     }
 }

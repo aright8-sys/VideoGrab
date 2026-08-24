@@ -21,11 +21,31 @@ final class AppState: ObservableObject {
     @Published var updatingCore = false
     @Published var coreVersion: String = ""
 
+    // 应用更新状态（「检查更新」按钮）
+    @Published var checkingUpdate = false
+    @Published var updateMessage = ""          // 「已是最新」/错误提示，几秒后自动消失
+    @Published var updateIsError = false
+    @Published var newRelease: UpdateChecker.Release?
+
     private let downloader = Downloader()
     private let saveDirKey = "VideoGrab.saveDir"
     // 递增代数：取消后旧下载的回调仍可能晚到（子进程退出、网络解析返回），
     // 回调凭代数自证未过期，过期的直接丢弃——否则会污染新一轮下载的进度/状态
     private var downloadID = 0
+
+    // 批量队列：queueTotal > 0 表示队列进行中
+    @Published var queueTotal = 0              // 队列任务总数；0 = 单任务模式
+    @Published var queueIndex = 0              // 已启动的任务数（含进行中的那个）
+    @Published var queueSummary: QueueSummary? // 队列结束后的汇总卡片
+    private var queueLinks: [String] = []
+    private var queueSucceeded = 0
+    private var queueFailures: [(link: String, message: String)] = []
+    private var clearUpdateMsgTask: Task<Void, Never>?
+
+    // 剪贴板监听：App 常驻后台轮询 changeCount，用户在浏览器里每复制一条链接就自动进框，
+    // 无需开关弹窗。系统剪贴板只保留最后一次复制，所以必须实时接住。
+    private var clipChangeCount = -1            // -1 = 首轮强制读一次（接管启动前已复制的链接）
+    private var clipTimer: Timer?
 
     init() {
         let defaults = UserDefaults.standard
@@ -39,16 +59,45 @@ final class AppState: ObservableObject {
         Notify.bootstrap()
         // 启动时预热 Chrome 钥匙串授权（下 B站要读 Cookie），让用户一次性点「始终允许」
         downloader.prewarmCookieAccess()
+        startClipboardWatch()
     }
 
-    // 菜单弹出时调用：把剪贴板里的视频链接预填进去
+    deinit { clipTimer?.invalidate() }
+
+    private func startClipboardWatch() {
+        clipTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.pollClipboard() }
+        }
+    }
+
+    private func pollClipboard() {
+        let count = NSPasteboard.general.changeCount
+        guard count != clipChangeCount else { return }   // 没变化不解析
+        clipChangeCount = count
+        ingestClipboard()
+    }
+
+    // 把剪贴板里的链接「增量」带入输入框：
+    // 只追加新链接——框里已有的、之前已经自动带过的不重复；用户手动删掉的也不会被塞回来。
+    private var autoAddedURLs: Set<String> = []
+
+    /// 弹窗打开时也走一遍（兜底：计时器间隙里的复制不会漏）
     func refreshFromClipboard() {
-        guard !isDownloading else { return }
+        ingestClipboard()
+    }
+
+    private func ingestClipboard() {
         guard let clip = NSPasteboard.general.string(forType: .string) else { return }
-        guard let found = Sites.firstURL(in: clip) else { return }
-        // 只有当前框为空、或框里也是个自动识别来的链接时才覆盖，避免打断用户手动编辑
-        if url.isEmpty || Sites.firstURL(in: url) != nil {
-            url = found
+        let found = Sites.allURLs(in: clip)
+        guard !found.isEmpty else { return }
+        let existing = Sites.allURLs(in: url)
+        let fresh = found.filter { !existing.contains($0) && !autoAddedURLs.contains($0) }
+        guard !fresh.isEmpty else { return }
+        autoAddedURLs.formUnion(fresh)
+        if url.isEmpty {
+            url = fresh.joined(separator: "\n")
+        } else {
+            url += "\n" + fresh.joined(separator: "\n")
         }
     }
 
@@ -66,8 +115,72 @@ final class AppState: ObservableObject {
     }
 
     func startDownload() {
-        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isDownloading else { return }
+        guard !isDownloading else { return }
+        let links = Sites.allURLs(in: url)
+        if links.count <= 1 {
+            // 单链接：行为与以前一致（完成时发单条「下载完成」通知）
+            queueTotal = 0
+            queueSummary = nil
+            guard let only = links.first else { return }
+            beginItem(only)
+        } else {
+            queueLinks = links
+            queueTotal = links.count
+            queueIndex = 0
+            queueSucceeded = 0
+            queueFailures = []
+            queueSummary = nil
+            lastFinishedName = ""
+            lastError = ""
+            startNextInQueue()
+        }
+    }
+
+    private func startNextInQueue() {
+        guard queueIndex < queueLinks.count else {
+            finishQueue()
+            return
+        }
+        let link = queueLinks[queueIndex]
+        queueIndex += 1
+        beginItem(link)
+    }
+
+    // 队列收尾：整个队列只发一次汇总通知，不逐条打扰
+    private func finishQueue() {
+        isDownloading = false
+        progress = 0
+        statusLine = ""
+        let summary = QueueSummary(succeeded: queueSucceeded,
+                                   failed: queueFailures.count,
+                                   failures: queueFailures.map { "\($0.link) —— \($0.message)" })
+        queueSummary = summary
+        Notify.send(title: summary.failed == 0 ? "队列下载成功" : "队列下载完成",
+                    body: summary.failed == 0 ? "\(summary.succeeded) 个链接全部下载完成"
+                                              : "成功 \(summary.succeeded) 个，失败 \(summary.failed) 个",
+                    fileDir: saveDir)
+        queueTotal = 0
+        queueLinks = []
+        queueFailures = []
+    }
+
+    /// 某个任务以「未发起下载的失败」告终（视频号不支持、解析失败等）：
+    /// 单任务模式照旧在界面报错；队列模式记一笔后继续下一个。
+    private func resolveFailure(_ id: Int, _ link: String, _ msg: String) {
+        if queueTotal > 0 {
+            queueFailures.append((link, msg))
+            isDownloading = false
+            progress = 0
+            startNextInQueue()
+        } else {
+            isDownloading = false
+            progress = 0
+            statusLine = ""
+            lastError = msg
+        }
+    }
+
+    private func beginItem(_ trimmed: String) {
         downloadID += 1
         let id = downloadID              // 本轮下载的代数
         isDownloading = true
@@ -85,17 +198,14 @@ final class AppState: ObservableObject {
             WechatChannelsResolver.resolve(url: trimmed) { [weak self] result in
                 Task { @MainActor in
                     guard let self, id == self.downloadID else { return }
-                    self.isDownloading = false
-                    self.progress = 0
-                    self.statusLine = ""
                     let base = "VideoGrab 不支持下载视频号。"
                     switch result {
                     case .success(let r):
                         let t = r.title.count > 40 ? String(r.title.prefix(40)) + "…" : r.title
                         let who = r.author.isEmpty ? "" : "（\(r.author)）"
-                        self.lastError = "已识别视频号视频《\(t)》\(who)。\n" + base
+                        self.resolveFailure(id, trimmed, "已识别视频号视频《\(t)》\(who)。\n" + base)
                     case .failure(let err):
-                        self.lastError = base + "\n（\(err.localizedDescription)）"
+                        self.resolveFailure(id, trimmed, base + "\n（\(err.localizedDescription)）")
                     }
                 }
             }
@@ -114,12 +224,9 @@ final class AppState: ObservableObject {
                         self.downloader.downloadDirect(mp4: r.mp4, title: r.title, quality: self.quality,
                                                        saveDir: self.saveDir,
                                                        onProgress: self.progressHandler(id),
-                                                       onFinish: self.finishHandler(id))
+                                                       onFinish: self.finishHandler(id, trimmed))
                     case .failure(let err):
-                        self.isDownloading = false
-                        self.progress = 0
-                        self.statusLine = ""
-                        self.lastError = err.localizedDescription
+                        self.resolveFailure(id, trimmed, err.localizedDescription)
                     }
                 }
             }
@@ -131,7 +238,7 @@ final class AppState: ObservableObject {
         if Sites.isVimeo(host) {
             statusLine = "正在解析 Vimeo…"
             downloader.downloadVimeo(url: trimmed, quality: quality, saveDir: saveDir,
-                                     onProgress: progressHandler(id), onFinish: finishHandler(id))
+                                     onProgress: progressHandler(id), onFinish: finishHandler(id, trimmed))
             return
         }
 
@@ -143,21 +250,18 @@ final class AppState: ObservableObject {
                     guard let self, id == self.downloadID else { return }
                     switch outcome {
                     case .failure(let err):
-                        self.isDownloading = false
-                        self.progress = 0
-                        self.statusLine = ""
-                        self.lastError = err.localizedDescription
+                        self.resolveFailure(id, trimmed, err.localizedDescription)
                     case .success(let pin):
                         switch pin {
                         case .native:
                             self.downloader.download(url: trimmed, quality: self.quality, saveDir: self.saveDir,
                                                      onProgress: self.progressHandler(id),
-                                                     onFinish: self.finishHandler(id))
+                                                     onFinish: self.finishHandler(id, trimmed))
                         case .vimeo(let vimeoURL):
                             self.statusLine = "正在解析 Vimeo…"
                             self.downloader.downloadVimeo(url: vimeoURL, quality: self.quality, saveDir: self.saveDir,
                                                           onProgress: self.progressHandler(id),
-                                                          onFinish: self.finishHandler(id))
+                                                          onFinish: self.finishHandler(id, trimmed))
                         }
                     }
                 }
@@ -166,7 +270,7 @@ final class AppState: ObservableObject {
         }
 
         downloader.download(url: trimmed, quality: quality, saveDir: saveDir,
-                            onProgress: progressHandler(id), onFinish: finishHandler(id))
+                            onProgress: progressHandler(id), onFinish: finishHandler(id, trimmed))
     }
 
     private func progressHandler(_ id: Int) -> (Double?, String?) -> Void {
@@ -179,20 +283,31 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func finishHandler(_ id: Int) -> (DownloadResult) -> Void {
+    private func finishHandler(_ id: Int, _ link: String) -> (DownloadResult) -> Void {
         { [weak self] result in
             Task { @MainActor in
                 guard let self, id == self.downloadID else { return }   // 过期回调丢弃
-                self.isDownloading = false
                 self.progress = 0
-                switch result {
-                case .success(let name):
-                    self.statusLine = "完成"
-                    self.lastFinishedName = name
-                    Notify.send(title: "下载完成", body: name, fileDir: self.saveDir)
-                case .failure(let msg):
+                if self.queueTotal > 0 {
+                    // 队列模式：不逐条通知、不弹结果卡，静默记账后继续下一个
+                    switch result {
+                    case .success:  self.queueSucceeded += 1
+                    case .failure(let msg): self.queueFailures.append((link, msg))
+                    }
+                    self.isDownloading = false
                     self.statusLine = ""
-                    self.lastError = msg
+                    self.startNextInQueue()
+                } else {
+                    self.isDownloading = false
+                    switch result {
+                    case .success(let name):
+                        self.statusLine = "完成"
+                        self.lastFinishedName = name
+                        Notify.send(title: "下载完成", body: name, fileDir: self.saveDir)
+                    case .failure(let msg):
+                        self.statusLine = ""
+                        self.lastError = msg
+                    }
                 }
             }
         }
@@ -204,6 +319,11 @@ final class AppState: ObservableObject {
         isDownloading = false
         progress = 0
         statusLine = "已取消"
+        if queueTotal > 0 {           // 连剩余队列一起取消
+            queueTotal = 0
+            queueLinks = []
+            queueFailures = []
+        }
     }
 
     func updateCore() {
@@ -225,4 +345,55 @@ final class AppState: ObservableObject {
             Task { @MainActor in self?.coreVersion = v }
         }
     }
+
+    // MARK: - 应用更新检查
+
+    func checkForUpdates() {
+        guard !checkingUpdate else { return }
+        checkingUpdate = true
+        newRelease = nil
+        updateMessage = ""
+        UpdateChecker.check { [weak self] result in
+            Task { @MainActor in
+                guard let self else { return }
+                self.checkingUpdate = false
+                switch result {
+                case .upToDate:
+                    self.showTransientUpdateMessage("已是最新版本 v\(UpdateChecker.currentVersion)", error: false)
+                case .available(let release):
+                    self.newRelease = release
+                case .failure(let msg):
+                    self.showTransientUpdateMessage(msg, error: true)
+                }
+            }
+        }
+    }
+
+    private func showTransientUpdateMessage(_ msg: String, error: Bool) {
+        updateIsError = error
+        updateMessage = msg
+        clearUpdateMsgTask?.cancel()
+        clearUpdateMsgTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard !Task.isCancelled else { return }
+            updateMessage = ""
+        }
+    }
+
+    func openReleasePage() {
+        guard let release = newRelease else { return }
+        NSWorkspace.shared.open(release.pageURL)
+    }
+
+    func dismissRelease() {
+        newRelease = nil
+    }
+
+}
+
+// 队列结束后的汇总（结果卡片数据）
+struct QueueSummary: Equatable {
+    let succeeded: Int
+    let failed: Int
+    let failures: [String]   // 「链接 —— 错误」行
 }

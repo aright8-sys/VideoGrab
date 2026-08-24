@@ -5,6 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 APP_NAME="VideoGrab"
+APP_VERSION="2.3.0"   # 应用版本：同时写入 Info.plist 的两个版本字段；发版打 tag 时与此保持一致
 CONFIG="release"
 BUILD_DIR=".build/${CONFIG}"
 APP_BUNDLE="${APP_NAME}.app"
@@ -85,9 +86,9 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" <<PLIST
     <key>CFBundleIdentifier</key>
     <string>com.local.${APP_NAME}</string>
     <key>CFBundleVersion</key>
-    <string>2.2.0</string>
+    <string>${APP_VERSION}</string>
     <key>CFBundleShortVersionString</key>
-    <string>2.2.0</string>
+    <string>${APP_VERSION}</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>

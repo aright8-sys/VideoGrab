@@ -31,6 +31,7 @@ struct PopoverView: View {
 
             linkField
 
+
             qualitySelector
 
             saveRow
@@ -38,6 +39,14 @@ struct PopoverView: View {
             actionArea
 
             resultArea
+
+            if let release = state.newRelease {
+                releaseBanner(release)
+            }
+
+            if !state.updateMessage.isEmpty {
+                updateMessageRow
+            }
 
             footer
         }
@@ -47,8 +56,16 @@ struct PopoverView: View {
         .animation(.snappy(duration: 0.28), value: state.isDownloading)
         .animation(.easeInOut(duration: 0.2), value: state.lastError)
         .animation(.easeInOut(duration: 0.2), value: state.lastFinishedName)
+        .animation(.easeInOut(duration: 0.2), value: state.queueSummary)
+        .animation(.easeInOut(duration: 0.2), value: state.newRelease != nil)
         .onAppear { state.refreshFromClipboard() }
     }
+
+    // 输入框里识别到的链接数（多链接时按钮与提示都会反映）
+    private var linkCount: Int {
+        Sites.allURLs(in: state.url).count
+    }
+
 
     // MARK: - 顶部品牌
 
@@ -85,40 +102,153 @@ struct PopoverView: View {
 
     // MARK: - 链接输入
 
+    // 链接输入：每条链接一行，带序号徽章和细分隔线；空态显示占位输入框
     private var linkField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "link")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
-            TextField("视频链接", text: $state.url)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .disabled(state.isDownloading)
-            if !state.url.isEmpty && !state.isDownloading {
-                Button {
-                    state.url = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.tertiary)
+        Group {
+            if linkRows.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "link")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    TextField("复制视频链接后自动加入，也可直接粘贴", text: $state.url, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .disabled(state.isDownloading)
                 }
-                .buttonStyle(.plain)
-                .help("清空")
+                .padding(.horizontal, 11)
+                .padding(.vertical, 10)
+            } else {
+                VStack(spacing: 0) {
+                    // 行数少时全部平铺；估算总高超过可用高度才折叠成滚动区。
+                    // 不用 ViewThatFits：MenuBarExtra 窗口高度由内容决定，布局提案会形成
+                    // 反馈回路（窗口长高→提案变大→方案切换→又变小），实测会把列表撑成空盒。
+                    if estimatedRowsHeight > listMaxHeight {
+                        ScrollView(.vertical) {
+                            rowsList
+                        }
+                        .frame(height: listMaxHeight)
+                        .scrollIndicators(.automatic)
+                    } else {
+                        rowsList
+                    }
+
+                    // 底部小工具条：条数统计 + 清空 / 粘贴（固定不随滚动）
+                    HStack(spacing: 12) {
+                        Text("\(linkRows.count) 条链接")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                        Spacer()
+                        if !state.isDownloading {
+                            Button {
+                                state.url = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("清空全部")
+                        }
+                        Button {
+                            if let s = NSPasteboard.general.string(forType: .string) { state.url = s }
+                        } label: {
+                            Image(systemName: "doc.on.clipboard")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("用剪贴板内容替换")
+                        .disabled(state.isDownloading)
+                    }
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 6)
+                    .background(Color.primary.opacity(0.035))
+                }
             }
-            Button {
-                if let s = NSPasteboard.general.string(forType: .string) { state.url = s }
-            } label: {
-                Image(systemName: "doc.on.clipboard")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("从剪贴板粘贴")
-            .disabled(state.isDownloading)
         }
-        .padding(.horizontal, 11)
-        .padding(.vertical, 9)
         .background(Theme.field.fill(.quaternary.opacity(0.6)))
         .overlay(Theme.field.strokeBorder(Theme.highlight, lineWidth: 0.6))
+        .clipShape(Theme.field)
+        .animation(.snappy(duration: 0.2), value: linkRows.count)
+    }
+
+    // 输入框按行拆出的链接（空行/首尾空白忽略）
+    private var linkRows: [String] {
+        state.url
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    // 第 idx 行的双向绑定：行内出现换行（如整段粘贴）时自动拆成多行；
+    // 行清空则该行移除；全部删空回到占位输入框
+    private func rowBinding(_ idx: Int) -> Binding<String> {
+        Binding(
+            get: { idx < linkRows.count ? linkRows[idx] : "" },
+            set: { newValue in
+                var rows = linkRows
+                let pieces = newValue
+                    .components(separatedBy: .newlines)
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+                guard idx < rows.count else {
+                    rows.append(contentsOf: pieces)
+                    state.url = rows.joined(separator: "\n")
+                    return
+                }
+                rows.replaceSubrange(idx..<idx + 1, with: pieces.isEmpty ? [] : pieces)
+                state.url = rows.joined(separator: "\n")
+            }
+        )
+    }
+
+
+    // 全部链接行（序号徽章 + 细分隔线）
+    private var rowsList: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(linkRows.enumerated()), id: \.offset) { idx, _ in
+                if idx > 0 {
+                    Divider()
+                        .overlay(Color.primary.opacity(0.08))
+                        .padding(.leading, 36)
+                }
+                HStack(alignment: .center, spacing: 9) {
+                    Text("\(idx + 1)")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundStyle(Theme.brand)
+                        .frame(width: 17, height: 17)
+                        .background(Circle().fill(Theme.brand.opacity(0.14)))
+                    TextField("", text: rowBinding(idx), axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .disabled(state.isDownloading)
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 8)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    // 列表可用的最大高度：随屏幕变化（预留弹窗其余内容 + 菜单栏/边距约 360pt）
+    private var listMaxHeight: CGFloat {
+        let visible = NSScreen.main?.visibleFrame.height ?? 900
+        return max(180, visible - 360)
+    }
+
+    // 行列表总高的估算：12pt 字约 15pt 行高 + 16pt 上下边距；
+    // 长链接按每行约 46 个字符折行（360pt 宽减去序号与边距后，12pt 字符均宽约 6.5pt）。
+    // 估算只用于「平铺 vs 滚动」的切换，误差一两行无碍。
+    private var estimatedRowsHeight: CGFloat {
+        let rows = linkRows
+        let body = rows.reduce(CGFloat(0)) { total, row in
+            let lines = max(1, (row.count + 45) / 46)
+            return total + CGFloat(16 + lines * 15)
+        }
+        let dividers = CGFloat(max(0, rows.count - 1)) * 0.5
+        return body + dividers
     }
 
     // MARK: - 画质选择
@@ -197,14 +327,14 @@ struct PopoverView: View {
             downloadingCard
                 .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
         } else {
-            let enabled = !state.url.trimmingCharacters(in: .whitespaces).isEmpty
+            let enabled = linkCount >= 1
             Button {
                 state.startDownload()
             } label: {
                 HStack(spacing: 7) {
                     Image(systemName: "arrow.down.to.line")
                         .font(.system(size: 13, weight: .bold))
-                    Text("开始下载")
+                    Text(linkCount > 1 ? "开始下载（\(linkCount) 个链接）" : "开始下载")
                         .font(.system(size: 14, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity)
@@ -274,15 +404,28 @@ struct PopoverView: View {
     }
 
     private var progressTitle: String {
-        if state.progress < 0 { return "准备中…" }
-        if state.progress >= 0.999 { return "处理中…" }
-        return "下载中"
+        var base: String
+        if state.progress < 0 {
+            base = "准备中…"
+        } else if state.progress >= 0.999 {
+            base = "处理中…"
+        } else {
+            base = "下载中"
+        }
+        // 队列模式：标题带上「第 n/N 个」
+        if state.queueTotal > 0 {
+            base = "第 \(state.queueIndex)/\(state.queueTotal) 个 · \(base)"
+        }
+        return base
     }
 
     // MARK: - 结果 / 错误
 
     @ViewBuilder
     private var resultArea: some View {
+        if let summary = state.queueSummary {
+            queueSummaryCard(summary)
+        }
         if !state.lastFinishedName.isEmpty {
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle.fill")
@@ -329,6 +472,51 @@ struct PopoverView: View {
             .overlay(Theme.card.strokeBorder(Theme.highlight, lineWidth: 0.6))
             .transition(.opacity.combined(with: .move(edge: .top)))
         }
+    }
+
+    private func queueSummaryCard(_ s: QueueSummary) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: s.failed == 0 ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(s.failed == 0 ? Color.green : Color.orange)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(s.failed == 0 ? "队列下载成功" : "队列下载完成")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(s.failed == 0 ? "共 \(s.succeeded) 个，全部下载完成"
+                                        : "成功 \(s.succeeded) 个，失败 \(s.failed) 个")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    NSWorkspace.shared.open(state.saveDir)
+                } label: {
+                    Image(systemName: "arrow.up.forward.app")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(s.failed == 0 ? Color.green : Color.orange)
+                .help("在访达中打开")
+            }
+            // 失败明细：限高滚动、可选中复制
+            if !s.failures.isEmpty {
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(s.failures.enumerated()), id: \.offset) { _, line in
+                            Text(line)
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+                .frame(maxHeight: 90)
+            }
+        }
+        .padding(10)
+        .background(Theme.card.fill((s.failed == 0 ? Color.green : Color.orange).opacity(0.12)))
+        .overlay(Theme.card.strokeBorder(Theme.highlight, lineWidth: 0.6))
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
     // MARK: - 底部
@@ -391,6 +579,25 @@ struct PopoverView: View {
             Spacer()
 
             Button {
+                state.checkForUpdates()
+            } label: {
+                HStack(spacing: 4) {
+                    if state.checkingUpdate {
+                        ProgressView().controlSize(.mini)
+                        Text("检查中…")
+                    } else {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                        Text("检查更新")
+                    }
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .disabled(state.checkingUpdate || state.isDownloading)
+            .help("检查 VideoGrab 是否有新版本（GitHub Releases）")
+
+            Button {
                 NSApplication.shared.terminate(nil)
             } label: {
                 Image(systemName: "power")
@@ -401,5 +608,51 @@ struct PopoverView: View {
             .help("退出")
         }
         .padding(.top, 2)
+    }
+
+    // 发现新版本：横幅，点按打开 Release 页下载
+    private func releaseBanner(_ release: UpdateChecker.Release) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.up.circle.fill")
+                .font(.system(size: 16))
+                .foregroundStyle(Theme.brand)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("新版本 v\(release.version) 可用（当前 v\(UpdateChecker.currentVersion)）")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("点击前往 GitHub 下载")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+            Button {
+                state.dismissRelease()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+            .help("忽略")
+        }
+        .padding(10)
+        .background(Theme.card.fill(Theme.brand.opacity(0.12)))
+        .overlay(Theme.card.strokeBorder(Theme.highlight, lineWidth: 0.6))
+        .contentShape(Rectangle())
+        .onTapGesture { state.openReleasePage() }
+        .transition(.opacity.combined(with: .move(edge: .top)))
+    }
+
+    // 「已是最新」/检查失败：几秒后自动消失的提示行
+    private var updateMessageRow: some View {
+        HStack(spacing: 5) {
+            Image(systemName: state.updateIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(state.updateIsError ? AnyShapeStyle(Color.orange) : AnyShapeStyle(Color.green))
+            Text(state.updateMessage)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            Spacer()
+        }
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 }
