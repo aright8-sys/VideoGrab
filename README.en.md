@@ -29,14 +29,20 @@ It lives in your menu bar. Copy a video URL, open the panel (it auto-fills), pic
 - 🔗 **Common video sites** — built-in engine, plus dedicated parsers where needed. WeChat Channels is recognized but not downloadable
 - 🌐 **Smart routing** — CN sites connect directly; overseas sites auto-detect local Clash proxy ports
 - 🍪 **Login cookies** — sites that need a login read Chrome cookies automatically
-- 📋 **Clipboard auto-collect** — a persistent clipboard watcher adds every video URL you copy in the browser straight to the download list; pasting a whole block of links works too, duplicates are ignored
+- 📋 **Clipboard auto-collect** — a persistent clipboard watcher adds every video URL you copy in the browser straight to the download list (toggle it off in the panel); pasting a whole block of links works too, duplicates are ignored
 - 📚 **Batch download queue** — multiple links download one by one with "n of N" progress; a single failure doesn't break the queue, and you get exactly one notification at the end
 - 📊 **Progress & notify** — live progress bar; system notification on completion; click to open save folder
-- 🔍 **Check for updates** — one click queries GitHub Releases and jumps to the download page when a new version is out
+- 🔍 **Check for updates** — one click queries GitHub Releases; you can install and relaunch from the panel, or open the web download page
 
 > 📦 **Download**: grab the prebuilt `VideoGrab.zip` from [Releases](https://github.com/aright8-sys/VideoGrab/releases/latest), or build it yourself (see below).
 
 ## 🆕 Changelog
+
+### v2.4 — In-app one-tap update
+
+- ⬇️ **Install from the panel** — after "Check for updates", a new version can be downloaded, verified, and swapped in place, then the app relaunches; **Web download** remains available.
+- 🔒 **Verified packages** — only this repo's tagged `VideoGrab.zip` is accepted, checked against GitHub's sha256 digest; the bundle ID must match and the version must be strictly newer. Downloads can be cancelled; a failed install rolls back.
+- 📋 **Clipboard watch is optional** — turn it off from the link-list toolbar; the choice is remembered. New URLs are not ingested while a download or app update is running.
 
 ### v2.3 — Batch queue & clipboard auto-collect
 
@@ -88,7 +94,7 @@ A major release with a fully reworked interface and experience:
 > - **Login cookies**: read from your local Chrome browser only when a site needs a login session;
 >   never uploaded or sent elsewhere.
 > - **Core updates**: "Update core" fetches the latest yt-dlp from GitHub (overseas; uses local proxy).
-> - **Update check**: queries the GitHub API for the latest version number — read-only; nothing is uploaded.
+> - **Update check**: queries the GitHub API for the latest version number; choosing one-tap install downloads the zip from GitHub and replaces the app locally. Read-only; nothing is uploaded.
 >
 > For personal, educational use only — **use at your own risk and respect platform ToS and copyright law**.
 
@@ -121,9 +127,10 @@ The "Update core" button at the bottom of the panel upgrades the **yt-dlp** down
 
 The "Check for updates" button in the bottom-right upgrades VideoGrab itself. It queries GitHub Releases for the latest version and compares it with the local one:
 
-- **New version available**: a banner appears in the panel; click it to open the Release download page, then replace the app.
+- **New version available**: a banner appears. If the Release includes `VideoGrab.zip` and a sha256 digest, tap **Update now** to download, verify, replace, and relaunch; **Web download** still opens the Release page.
 - **Already up to date**: a brief note with the current version.
 - The query goes to the GitHub API (overseas; uses your local proxy or a direct connection automatically). The anonymous API allows 60 requests/hour — plenty for manual checks.
+- Auto-update only accepts this repo's tagged GitHub asset URLs and checks SHA-256 against GitHub's digest. There is no Developer ID, so quarantine is cleared and the bundle is ad-hoc signed only after that verification, so the new instance can launch.
 
 
 ## Build & run
@@ -152,7 +159,7 @@ swift test                # parser tests
 5. **YouTube and other overseas sites**: start your local Clash (or similar) proxy first.
 6. **Vimeo**: Google Chrome must be installed.
 7. **WeChat Channels**: download is not supported.
-8. **Check for updates**: use the "Check for updates" button in the bottom-right of the panel.
+8. **Check for updates**: use the "Check for updates" button in the bottom-right; a new version can be installed in one tap. Clipboard auto-collect can be turned off from the link-list toolbar.
 
 ## Project layout
 
@@ -165,6 +172,7 @@ Sources/VideoGrab/
   PopoverView.swift        Popover panel UI
   Notify.swift             Download-complete notifications
   UpdateChecker.swift      GitHub Releases update check
+  SelfUpdater.swift        Download zip, verify hash, replace and relaunch
   VimeoDownloader.swift    Vimeo (Chrome + segment reassembly)
   ChromeCDP.swift          Headless Chrome DevTools Protocol
   PinterestResolver.swift  Pinterest → Vimeo detection

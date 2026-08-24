@@ -40,8 +40,8 @@ struct PopoverView: View {
 
             resultArea
 
-            if let release = state.newRelease {
-                releaseBanner(release)
+            if state.showUpdateBanner {
+                updateBanner
             }
 
             if !state.updateMessage.isEmpty {
@@ -57,13 +57,12 @@ struct PopoverView: View {
         .animation(.easeInOut(duration: 0.2), value: state.lastError)
         .animation(.easeInOut(duration: 0.2), value: state.lastFinishedName)
         .animation(.easeInOut(duration: 0.2), value: state.queueSummary)
-        .animation(.easeInOut(duration: 0.2), value: state.newRelease != nil)
+        .animation(.easeInOut(duration: 0.2), value: state.showUpdateBanner)
         .onAppear { state.refreshFromClipboard() }
     }
 
-    // 输入框里识别到的链接数（多链接时按钮与提示都会反映）
     private var linkCount: Int {
-        Sites.allURLs(in: state.url).count
+        Sites.allURLs(in: state.urlText).count
     }
 
 
@@ -102,27 +101,24 @@ struct PopoverView: View {
 
     // MARK: - 链接输入
 
-    // 链接输入：每条链接一行，带序号徽章和细分隔线；空态显示占位输入框
     private var linkField: some View {
         Group {
-            if linkRows.isEmpty {
+            if state.linkLines.isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "link")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.secondary)
-                    TextField("复制视频链接后自动加入，也可直接粘贴", text: $state.url, axis: .vertical)
+                    TextField("复制视频链接后自动加入，也可直接粘贴", text: state.urlBinding, axis: .vertical)
                         .textFieldStyle(.plain)
                         .font(.system(size: 13))
                         .fixedSize(horizontal: false, vertical: true)
-                        .disabled(state.isDownloading)
+                        .disabled(state.isDownloading || state.isUpdatingApp)
+                    clipboardWatchButton
                 }
                 .padding(.horizontal, 11)
                 .padding(.vertical, 10)
             } else {
                 VStack(spacing: 0) {
-                    // 行数少时全部平铺；估算总高超过可用高度才折叠成滚动区。
-                    // 不用 ViewThatFits：MenuBarExtra 窗口高度由内容决定，布局提案会形成
-                    // 反馈回路（窗口长高→提案变大→方案切换→又变小），实测会把列表撑成空盒。
                     if estimatedRowsHeight > listMaxHeight {
                         ScrollView(.vertical) {
                             rowsList
@@ -133,15 +129,15 @@ struct PopoverView: View {
                         rowsList
                     }
 
-                    // 底部小工具条：条数统计 + 清空 / 粘贴（固定不随滚动）
                     HStack(spacing: 12) {
-                        Text("\(linkRows.count) 条链接")
+                        Text("\(linkCount) 条链接")
                             .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
                         Spacer()
+                        clipboardWatchButton
                         if !state.isDownloading {
                             Button {
-                                state.url = ""
+                                state.clearLinks()
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
                                     .font(.system(size: 12))
@@ -151,7 +147,9 @@ struct PopoverView: View {
                             .help("清空全部")
                         }
                         Button {
-                            if let s = NSPasteboard.general.string(forType: .string) { state.url = s }
+                            if let s = NSPasteboard.general.string(forType: .string) {
+                                state.replaceURLText(s)
+                            }
                         } label: {
                             Image(systemName: "doc.on.clipboard")
                                 .font(.system(size: 12, weight: .medium))
@@ -170,44 +168,25 @@ struct PopoverView: View {
         .background(Theme.field.fill(.quaternary.opacity(0.6)))
         .overlay(Theme.field.strokeBorder(Theme.highlight, lineWidth: 0.6))
         .clipShape(Theme.field)
-        .animation(.snappy(duration: 0.2), value: linkRows.count)
+        .animation(.snappy(duration: 0.2), value: state.linkLines.count)
     }
 
-    // 输入框按行拆出的链接（空行/首尾空白忽略）
-    private var linkRows: [String] {
-        state.url
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
+    private var clipboardWatchButton: some View {
+        Button {
+            state.setClipboardWatch(!state.clipboardWatchEnabled)
+        } label: {
+            Image(systemName: state.clipboardWatchEnabled ? "clipboard.fill" : "clipboard")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(state.clipboardWatchEnabled ? AnyShapeStyle(Theme.brand) : AnyShapeStyle(.tertiary))
+        }
+        .buttonStyle(.plain)
+        .help(state.clipboardWatchEnabled ? "关闭剪贴板自动收集" : "开启剪贴板自动收集")
+        .disabled(state.isDownloading)
     }
 
-    // 第 idx 行的双向绑定：行内出现换行（如整段粘贴）时自动拆成多行；
-    // 行清空则该行移除；全部删空回到占位输入框
-    private func rowBinding(_ idx: Int) -> Binding<String> {
-        Binding(
-            get: { idx < linkRows.count ? linkRows[idx] : "" },
-            set: { newValue in
-                var rows = linkRows
-                let pieces = newValue
-                    .components(separatedBy: .newlines)
-                    .map { $0.trimmingCharacters(in: .whitespaces) }
-                    .filter { !$0.isEmpty }
-                guard idx < rows.count else {
-                    rows.append(contentsOf: pieces)
-                    state.url = rows.joined(separator: "\n")
-                    return
-                }
-                rows.replaceSubrange(idx..<idx + 1, with: pieces.isEmpty ? [] : pieces)
-                state.url = rows.joined(separator: "\n")
-            }
-        )
-    }
-
-
-    // 全部链接行（序号徽章 + 细分隔线）
     private var rowsList: some View {
         VStack(spacing: 0) {
-            ForEach(Array(linkRows.enumerated()), id: \.offset) { idx, _ in
+            ForEach(Array(state.linkLines.enumerated()), id: \.element.id) { idx, line in
                 if idx > 0 {
                     Divider()
                         .overlay(Color.primary.opacity(0.08))
@@ -219,7 +198,7 @@ struct PopoverView: View {
                         .foregroundStyle(Theme.brand)
                         .frame(width: 17, height: 17)
                         .background(Circle().fill(Theme.brand.opacity(0.14)))
-                    TextField("", text: rowBinding(idx), axis: .vertical)
+                    TextField("", text: state.lineBinding(line.id), axis: .vertical)
                         .textFieldStyle(.plain)
                         .font(.system(size: 12))
                         .fixedSize(horizontal: false, vertical: true)
@@ -242,7 +221,7 @@ struct PopoverView: View {
     // 长链接按每行约 46 个字符折行（360pt 宽减去序号与边距后，12pt 字符均宽约 6.5pt）。
     // 估算只用于「平铺 vs 滚动」的切换，误差一两行无碍。
     private var estimatedRowsHeight: CGFloat {
-        let rows = linkRows
+        let rows = state.linkLines.map(\.text)
         let body = rows.reduce(CGFloat(0)) { total, row in
             let lines = max(1, (row.count + 45) / 46)
             return total + CGFloat(16 + lines * 15)
@@ -594,7 +573,7 @@ struct PopoverView: View {
                 .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .disabled(state.checkingUpdate || state.isDownloading)
+            .disabled(state.checkingUpdate || state.isDownloading || state.isUpdatingApp)
             .help("检查 VideoGrab 是否有新版本（GitHub Releases）")
 
             Button {
@@ -610,34 +589,110 @@ struct PopoverView: View {
         .padding(.top, 2)
     }
 
-    // 发现新版本：横幅，点按打开 Release 页下载
-    private func releaseBanner(_ release: UpdateChecker.Release) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "arrow.up.circle.fill")
-                .font(.system(size: 16))
-                .foregroundStyle(Theme.brand)
-            VStack(alignment: .leading, spacing: 1) {
-                Text("新版本 v\(release.version) 可用（当前 v\(UpdateChecker.currentVersion)）")
-                    .font(.system(size: 12, weight: .semibold))
-                Text("点击前往 GitHub 下载")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
+    @ViewBuilder
+    private var updateBanner: some View {
+        switch state.updateFlow {
+        case .idle:
+            EmptyView()
+        case .available(let release):
+            availableUpdateBanner(release)
+        case .downloading(let p):
+            updatingBanner(title: "正在下载更新",
+                           subtitle: p > 0 ? "\(Int(p * 100))%" : "连接中…",
+                           progress: p,
+                           cancellable: true)
+        case .installing:
+            updatingBanner(title: "正在安装并重启…", subtitle: "请稍候", progress: 1, cancellable: false)
+        }
+    }
+
+    private func availableUpdateBanner(_ release: UpdateChecker.Release) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(Theme.brand)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("新版本 v\(release.version) 可用（当前 v\(UpdateChecker.currentVersion)）")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(release.canAutoUpdate ? "一键安装并重启，或前往网页下载"
+                                               : "此版本请前往网页下载")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 4)
+                Button {
+                    state.dismissRelease()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("忽略")
             }
-            Spacer(minLength: 4)
-            Button {
-                state.dismissRelease()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(.tertiary)
+            HStack(spacing: 8) {
+                if release.canAutoUpdate {
+                    Button {
+                        state.startAutoUpdate()
+                    } label: {
+                        Text("立即更新")
+                            .font(.system(size: 11, weight: .semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .foregroundStyle(.white)
+                            .background(Capsule().fill(Theme.brand))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(state.isDownloading)
+                }
+                Button {
+                    state.openReleasePage()
+                } label: {
+                    Text("网页下载")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
-            .help("忽略")
         }
         .padding(10)
         .background(Theme.card.fill(Theme.brand.opacity(0.12)))
         .overlay(Theme.card.strokeBorder(Theme.highlight, lineWidth: 0.6))
-        .contentShape(Rectangle())
-        .onTapGesture { state.openReleasePage() }
+        .transition(.opacity.combined(with: .move(edge: .top)))
+    }
+
+    private func updatingBanner(title: String, subtitle: String, progress: Double, cancellable: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(subtitle)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if cancellable {
+                    Button("取消") { state.cancelAutoUpdate() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.red)
+                }
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.quaternary.opacity(0.7))
+                    Capsule()
+                        .fill(Theme.brand)
+                        .frame(width: max(6, geo.size.width * max(progress, 0.05)))
+                }
+            }
+            .frame(height: 4)
+        }
+        .padding(10)
+        .background(Theme.card.fill(Theme.brand.opacity(0.12)))
+        .overlay(Theme.card.strokeBorder(Theme.highlight, lineWidth: 0.6))
         .transition(.opacity.combined(with: .move(edge: .top)))
     }
 

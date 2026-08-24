@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 APP_NAME="VideoGrab"
-APP_VERSION="2.3.0"   # 应用版本：同时写入 Info.plist 的两个版本字段；发版打 tag 时与此保持一致
+APP_VERSION="2.4.0"   # 应用版本：同时写入 Info.plist 的两个版本字段；发版打 tag 时与此保持一致
 CONFIG="release"
 BUILD_DIR=".build/${CONFIG}"
 APP_BUNDLE="${APP_NAME}.app"

@@ -48,6 +48,76 @@ final class ParserTests: XCTestCase {
         XCTAssertNil(Sites.firstURL(in: "没有链接的文本"))
     }
 
+    func testAllURLsExtractsDedupesAndKeepsOrder() {
+        let text = """
+        https://vimeo.com/1
+        看看 https://youtu.be/abc 还有 https://vimeo.com/1
+        https://www.bilibili.com/video/BV1xx411c7mD。
+        """
+        XCTAssertEqual(Sites.allURLs(in: text), [
+            "https://vimeo.com/1",
+            "https://youtu.be/abc",
+            "https://www.bilibili.com/video/BV1xx411c7mD",
+        ])
+    }
+
+    // MARK: - 版本比较与更新包校验
+
+    func testCompareVersions() {
+        XCTAssertEqual(UpdateChecker.compare("2.10.0", "2.9.1"), .orderedDescending)
+        XCTAssertEqual(UpdateChecker.compare("2.3", "2.3.0"), .orderedSame)
+        XCTAssertEqual(UpdateChecker.compare("2.2.9", "2.3.0"), .orderedAscending)
+        XCTAssertEqual(UpdateChecker.compare("2.3.1", "2.3.0"), .orderedDescending)
+    }
+
+    func testParseDigestAndTrustedZipURL() {
+        XCTAssertEqual(UpdateChecker.parseDigest("sha256:8a10f252e4e6d0384a69dd911d3206ae4fbb1288a478a606f48d90e2d3c1b87a"),
+                       "8a10f252e4e6d0384a69dd911d3206ae4fbb1288a478a606f48d90e2d3c1b87a")
+        XCTAssertNil(UpdateChecker.parseDigest("md5:abc"), "非 sha256 拒绝")
+        XCTAssertNil(UpdateChecker.parseDigest("sha256:xyz"), "非 hex 拒绝")
+
+        let ok = URL(string: "https://github.com/aright8-sys/VideoGrab/releases/download/v2.4.0/VideoGrab.zip")!
+        XCTAssertTrue(UpdateChecker.isTrustedZipURL(ok))
+        XCTAssertFalse(UpdateChecker.isTrustedZipURL(URL(string: "https://github.com/aright8-sys/VideoGrab/releases/latest/download/VideoGrab.zip")!))
+        XCTAssertFalse(UpdateChecker.isTrustedZipURL(URL(string: "https://evil.example/VideoGrab.zip")!))
+        XCTAssertFalse(UpdateChecker.isTrustedZipURL(URL(string: "http://github.com/aright8-sys/VideoGrab/releases/download/v2.4.0/VideoGrab.zip")!))
+    }
+
+    func testParseReleaseJSONRequiresHigherVersionAndPinnedAsset() {
+        let json: [String: Any] = [
+            "tag_name": "v9.9.9",
+            "html_url": "https://github.com/aright8-sys/VideoGrab/releases/tag/v9.9.9",
+            "body": "notes",
+            "assets": [[
+                "name": "VideoGrab.zip",
+                "browser_download_url": "https://github.com/aright8-sys/VideoGrab/releases/download/v9.9.9/VideoGrab.zip",
+                "digest": "sha256:8a10f252e4e6d0384a69dd911d3206ae4fbb1288a478a606f48d90e2d3c1b87a",
+            ]],
+        ]
+        if case .available(let r) = UpdateChecker.parse(json, current: "2.3.0") {
+            XCTAssertEqual(r.version, "9.9.9")
+            XCTAssertTrue(r.canAutoUpdate)
+            XCTAssertEqual(r.sha256, "8a10f252e4e6d0384a69dd911d3206ae4fbb1288a478a606f48d90e2d3c1b87a")
+        } else {
+            XCTFail("应解析为有新版本")
+        }
+
+        if case .upToDate = UpdateChecker.parse(json, current: "9.9.9") {} else {
+            XCTFail("同版本应为已是最新")
+        }
+
+        var noDigest = json
+        noDigest["assets"] = [[
+            "name": "VideoGrab.zip",
+            "browser_download_url": "https://github.com/aright8-sys/VideoGrab/releases/download/v9.9.9/VideoGrab.zip",
+        ]]
+        if case .available(let r) = UpdateChecker.parse(noDigest, current: "2.3.0") {
+            XCTAssertFalse(r.canAutoUpdate, "没有 digest 只能走网页下载")
+        } else {
+            XCTFail("无 digest 仍应提示有新版本")
+        }
+    }
+
     // MARK: - yt-dlp 输出解析
 
     func testParsePercent() throws {
