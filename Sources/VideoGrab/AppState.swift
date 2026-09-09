@@ -299,9 +299,7 @@ final class AppState: ObservableObject {
         }
 
         if Sites.isVimeo(host) {
-            statusLine = "正在解析 Vimeo…"
-            downloader.downloadVimeo(url: trimmed, quality: quality, saveDir: saveDir,
-                                     onProgress: progressHandler(id), onFinish: finishHandler(id, trimmed))
+            resolveFailure(id, trimmed, "Vimeo 视频现受 DRM 加密保护，暂不支持下载。")
             return
         }
 
@@ -319,11 +317,9 @@ final class AppState: ObservableObject {
                             self.downloader.download(url: trimmed, quality: self.quality, saveDir: self.saveDir,
                                                      onProgress: self.progressHandler(id),
                                                      onFinish: self.finishHandler(id, trimmed))
-                        case .vimeo(let vimeoURL):
-                            self.statusLine = "正在解析 Vimeo…"
-                            self.downloader.downloadVimeo(url: vimeoURL, quality: self.quality, saveDir: self.saveDir,
-                                                          onProgress: self.progressHandler(id),
-                                                          onFinish: self.finishHandler(id, trimmed))
+                        case .vimeo:
+                            self.resolveFailure(id, trimmed,
+                                                "该 Pinterest 视频实际是 Vimeo 外链；Vimeo 视频现受 DRM 加密保护，暂不支持下载。")
                         }
                     }
                 }

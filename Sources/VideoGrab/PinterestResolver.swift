@@ -3,7 +3,7 @@ import Foundation
 // Pinterest 原生视频（pinimg CDN）走 yt-dlp 通用路径即可；但有些 pin 是 Vimeo
 // 视频的「视频 pin」——页面里只有封面图 + vimeo.com 外链，没有原生 mp4，
 // yt-dlp 会转到 Vimeo 提取器然后 401。这里先抓 pin 页判断来源：
-// 是 Vimeo 就把 vimeo 链接交回给 Vimeo 解析器，否则走 yt-dlp。
+// 是 Vimeo 就明确提示「暂不支持」，否则走 yt-dlp。（Vimeo 视频现受 DRM 加密，已不再支持下载。）
 enum PinterestResolver {
     enum Outcome {
         case native

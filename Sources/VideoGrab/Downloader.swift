@@ -52,7 +52,6 @@ enum DownloadResult {
 final class Downloader {
     private var process: Process?
     private var directDownloader: DirectDownloader?
-    private var vimeoDownloader: VimeoDownloader?
     private let appSupportBin: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return base.appendingPathComponent("VideoGrab/bin", isDirectory: true)
@@ -333,27 +332,11 @@ final class Downloader {
         dd.start(url: mp4, onProgress: onProgress, onFinish: onFinish)
     }
 
-    // Vimeo 专用（yt-dlp 的 Vimeo 提取器已坏）：无头 Chrome 过验证 + DASH 分片重组
-    func downloadVimeo(url: String, quality: Quality, saveDir: URL,
-                       onProgress: @escaping (Double?, String?) -> Void,
-                       onFinish: @escaping (DownloadResult) -> Void) {
-        guard let ffmpeg = ffmpegDir().map({ $0 + "/ffmpeg" }) else {
-            onFinish(.failure("找不到 ffmpeg，请重新构建 App。"))
-            return
-        }
-        let vd = VimeoDownloader()
-        self.vimeoDownloader = vd
-        vd.start(url: url, quality: quality, saveDir: saveDir, ffmpeg: ffmpeg,
-                 onProgress: onProgress, onFinish: onFinish)
-    }
-
     func cancel() {
         process?.terminate()
         process = nil
         directDownloader?.cancel()
         directDownloader = nil
-        vimeoDownloader?.cancel()
-        vimeoDownloader = nil
     }
 
     // MARK: - 内核版本 / 更新

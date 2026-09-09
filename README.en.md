@@ -44,6 +44,7 @@ It lives in your menu bar. Copy a video URL, open the panel (it auto-fills), pic
 - 🔒 **Verified packages** — only this repo's tagged `VideoGrab.zip` is accepted, checked against GitHub's sha256 digest; the bundle ID must match and the version must be strictly newer. Downloads can be cancelled; a failed install rolls back.
 - 📋 **Clipboard watch is optional** — turn it off from the link-list toolbar; the choice is remembered. New URLs are not ingested while a download or app update is running.
 - 🛡️ **Proxy detection fixed (ATS)** — the app does not relax App Transport Security, so the cleartext-HTTP proxy probe was rejected and every foreign site (Pinterest / YouTube / …) complained "needs a local proxy". The probe now uses HTTPS and detection works again.
+- 🗑️ **Vimeo downloads removed** — Vimeo videos are now DRM-encrypted (CENC adaptive streams, no clear direct source), so they can no longer be downloaded; the Vimeo downloader and headless-Chrome dependency were removed, and Vimeo links now say "not supported" clearly.
 
 ### v2.3 — Batch queue & clipboard auto-collect
 
@@ -110,7 +111,7 @@ Different sites need opposite network paths; the app picks automatically by host
 | CN sites | Direct |
 | Login-gated sites | Chrome cookies |
 | Overseas sites | Local Clash proxy (7897/7890, etc.) |
-| Vimeo | Local Chrome (yt-dlp extractor is broken) |
+| Vimeo | Not supported now (removed; video is DRM-protected) |
 | WeChat Channels | Title lookup only; no download |
 
 On launch, inherited `*_proxy` environment variables are cleared so GUI and terminal behave consistently.
@@ -158,7 +159,7 @@ swift test                # parser tests
 4. **Login-gated content**: if a "Chrome Safe Storage" Keychain prompt appears, click
    "Always Allow" and enter your password (once only). Sign in to the site in Chrome first.
 5. **YouTube and other overseas sites**: start your local Clash (or similar) proxy first.
-6. **Vimeo**: Google Chrome must be installed.
+6. **Vimeo**: not supported now (video is DRM-protected; the dedicated downloader was removed).
 7. **WeChat Channels**: download is not supported.
 8. **Check for updates**: use the "Check for updates" button in the bottom-right; a new version can be installed in one tap. Clipboard auto-collect can be turned off from the link-list toolbar.
 
@@ -174,9 +175,7 @@ Sources/VideoGrab/
   Notify.swift             Download-complete notifications
   UpdateChecker.swift      GitHub Releases update check
   SelfUpdater.swift        Download zip, verify hash, replace and relaunch
-  VimeoDownloader.swift    Vimeo (Chrome + segment reassembly)
-  ChromeCDP.swift          Headless Chrome DevTools Protocol
-  PinterestResolver.swift  Pinterest → Vimeo detection
+  PinterestResolver.swift  Pinterest native / embedded-video detection
   WechatChannels.swift     Channels lookup (no download)
   Xinpianchang.swift       Xinpianchang direct-link parser
 build-app.sh               Packaging script (fetch cores + write LSUIElement)

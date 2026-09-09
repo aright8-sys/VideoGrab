@@ -44,6 +44,7 @@
 - 🔒 **更新包校验**：只接受本仓库、带具体 tag 的 `VideoGrab.zip`，并用 GitHub 提供的 sha256 digest 核对；Bundle ID 必须匹配，版本必须严格更高。下载可取消，安装失败会回滚。
 - 📋 **剪贴板收集可关**：链接列表工具条可关闭自动收集，设置会记住；下载或更新进行中不会再往列表里塞链接。
 - 🛡️ **修复代理探测失效（ATS）**：App 未放开 App Transport Security，代理验证用的明文 HTTP 请求会被拦截，导致国外站（Pinterest / YouTube 等）一律提示「需要本地代理」。验证请求改为走 HTTPS，探测恢复正常。
+- 🗑️ **移除 Vimeo 下载**：Vimeo 视频现受 DRM 加密保护（自适应流为 CENC 加密、无明文直链），已无法下载；移除 Vimeo 专用下载器与无头 Chrome 依赖，Vimeo 链接改为明确提示「暂不支持」。
 
 ### v2.3 — 批量队列下载与剪贴板自动收集
 
@@ -108,7 +109,7 @@
 | 国内站 | 直连 |
 | 需登录的站 | 自动读取 Chrome Cookie |
 | 国外站 | 走本地 Clash 代理（7897/7890 等） |
-| Vimeo | 本机 Chrome 解析（yt-dlp 提取器已坏） |
+| Vimeo | 暂不支持（已移除；视频现受 DRM 加密保护） |
 | 视频号 | 识别标题，不提供下载 |
 
 App 启动时会清理继承来的 `*_proxy` 环境变量，避免 GUI 与终端行为不一致。
@@ -163,7 +164,7 @@ swift test                # 跑解析器测试
 3. 选择画质，点击「开始下载」。多条链接时按钮会显示数量并排队依次下载，结束时只通知一次。
 4. **需要登录的内容**：若弹出「Chrome Safe Storage」钥匙串窗口，点「始终允许」+ 输入开机密码（只需一次）；请先在 Chrome 里登录对应网站。
 5. **YouTube 等国外站**：需先启动本地 Clash 等代理。
-6. **Vimeo**：需要本机装着 Google Chrome。
+6. **Vimeo**：暂不支持下载（视频现受 DRM 加密保护，已移除专用下载器）。
 7. **微信视频号**：暂不支持下载。
 8. **检查更新**：点面板右下角的「检查更新」查询新版本；有新版可一键安装。剪贴板自动收集可在链接列表工具条里关闭。
 
@@ -179,9 +180,7 @@ Sources/VideoGrab/
   Notify.swift          下载完成系统通知
   UpdateChecker.swift   GitHub Releases 应用更新检查
   SelfUpdater.swift     下载 zip、校验哈希并替换重启
-  VimeoDownloader.swift Vimeo 专用（Chrome + 分片重组）
-  ChromeCDP.swift       无头 Chrome 调试协议
-  PinterestResolver.swift  Pinterest → Vimeo 判定
+  PinterestResolver.swift  Pinterest 原生 / 嵌入视频判定
   WechatChannels.swift  视频号识别（不下）
   Xinpianchang.swift    新片场直链解析
 build-app.sh            打包脚本（下载内核 + 写入 LSUIElement）

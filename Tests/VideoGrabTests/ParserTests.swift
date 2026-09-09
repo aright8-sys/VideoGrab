@@ -9,6 +9,7 @@ final class ParserTests: XCTestCase {
     func testDomainSuffixMatching() {
         XCTAssertTrue(Sites.isVimeo("vimeo.com"), "裸域名应命中")
         XCTAssertTrue(Sites.isVimeo("player.vimeo.com"), "子域名应命中")
+        XCTAssertFalse(Sites.isVimeo("vimeo.com.evil.com"), "假后缀域名不得命中")
         XCTAssertTrue(Sites.isBilibili("www.bilibili.com"))
         XCTAssertTrue(Sites.isBilibili("b23.tv"), "短链应命中")
         XCTAssertFalse(Sites.isBilibili("bilibili.com.evil.com"), "假后缀域名不得命中（会被强制直连）")
@@ -188,22 +189,5 @@ final class ParserTests: XCTestCase {
                        "98765432", "裸 {id} 形式")
         XCTAssertNil(PinterestResolver.vimeoVideoID(in: "visit https://vimeo.com for more"),
                      "纯首页不是视频 pin")
-    }
-
-    // MARK: - Vimeo DASH 清单解析
-
-    func testVimeoManifestParsing() throws {
-        let json = """
-        {"video":[{"id":"v1","base_url":"base/v/","height":1080,"bitrate":3000,
-                   "init_segment":"aGVsbG8=","segments":[{"url":"seg1.m4s"},{"url":"seg2.m4s"}]}],
-         "audio":[{"id":"a1","base_url":"base/a/","bitrate":128,
-                   "init_segment":"aGVsbG8=","segments":[{"url":"aud.m4s"}]}]}
-        """
-        let playlist = "https://player.vimeo.com/v2/playlist/av/primary/playlist.json?sig=x"
-        let m = try XCTUnwrap(VimeoDownloader().parseManifest(Data(json.utf8), playlistURL: playlist))
-        XCTAssertEqual(m.remuxRoot, "https://player.vimeo.com/v2/remux/avf/", "remux 根由 playlist 地址推导")
-        XCTAssertEqual(m.video.first?.segments, ["seg1.m4s", "seg2.m4s"])
-        XCTAssertEqual(m.video.first?.initSegment, Data("hello".utf8), "init segment base64 解码")
-        XCTAssertEqual(m.audio.count, 1)
     }
 }
