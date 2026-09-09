@@ -105,8 +105,10 @@ final class Downloader {
 
     // 让候选端口代发一次真实请求：能带回 HTTP 响应即为可用代理；
     // 普通网站服务器处理不了代理式请求，必然报错，借此与真代理区分。
+    // 注意：必须用 HTTPS。App 未配置 ATS 例外，URLSession 会被 ATS 拒绝明文
+    // HTTP 请求（code -1022），导致代理探测永远失败——国外站全部报「需要本地代理」。
     private static func verifyProxyPort(port: Int, done: @escaping (Bool) -> Void) {
-        guard let url = URL(string: "http://www.gstatic.com/generate_204") else { done(false); return }
+        guard let url = URL(string: "https://www.gstatic.com/generate_204") else { done(false); return }
         var req = URLRequest(url: url)
         req.timeoutInterval = 4
         let cfg = URLSessionConfiguration.ephemeral
