@@ -38,13 +38,16 @@ It lives in your menu bar. Copy a video URL, open the panel (it auto-fills), pic
 
 ## 🆕 Changelog
 
+### v2.5 — Vimeo removed & proxy detection fix
+
+- 🛡️ **Proxy detection fixed (ATS)** — the app does not relax App Transport Security, so the cleartext-HTTP proxy probe was rejected and every foreign site (Pinterest / YouTube / …) complained "needs a local proxy". The probe now uses HTTPS and detection works again.
+- 🗑️ **Vimeo downloads removed** — Vimeo videos are now DRM-encrypted (CENC adaptive streams, no clear direct source), so they can no longer be downloaded; the Vimeo downloader and headless-Chrome dependency were removed, and Vimeo links now say "not supported" clearly.
+
 ### v2.4 — In-app one-tap update
 
 - ⬇️ **Install from the panel** — after "Check for updates", a new version can be downloaded, verified, and swapped in place, then the app relaunches; **Web download** remains available.
 - 🔒 **Verified packages** — only this repo's tagged `VideoGrab.zip` is accepted, checked against GitHub's sha256 digest; the bundle ID must match and the version must be strictly newer. Downloads can be cancelled; a failed install rolls back.
 - 📋 **Clipboard watch is optional** — turn it off from the link-list toolbar; the choice is remembered. New URLs are not ingested while a download or app update is running.
-- 🛡️ **Proxy detection fixed (ATS)** — the app does not relax App Transport Security, so the cleartext-HTTP proxy probe was rejected and every foreign site (Pinterest / YouTube / …) complained "needs a local proxy". The probe now uses HTTPS and detection works again.
-- 🗑️ **Vimeo downloads removed** — Vimeo videos are now DRM-encrypted (CENC adaptive streams, no clear direct source), so they can no longer be downloaded; the Vimeo downloader and headless-Chrome dependency were removed, and Vimeo links now say "not supported" clearly.
 
 ### v2.3 — Batch queue & clipboard auto-collect
 
