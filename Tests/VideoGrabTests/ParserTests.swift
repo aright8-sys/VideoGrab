@@ -16,6 +16,9 @@ final class ParserTests: XCTestCase {
         XCTAssertFalse(Sites.isBilibili("evil-bilibili.com"), "前缀伪装不得命中（旧 contains 实现的缺陷）")
         XCTAssertTrue(Sites.isCNHost("www.xiaohongshu.com"), "国内站识别→直连")
         XCTAssertFalse(Sites.isCNHost("youtube.com"))
+        XCTAssertTrue(Sites.isYouTube("www.youtube.com"))
+        XCTAssertTrue(Sites.isYouTube("youtu.be"))
+        XCTAssertFalse(Sites.isYouTube("youtube.com.evil.com"))
     }
 
     func testNeedsCookies() {
@@ -136,6 +139,34 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(Downloader.parseDestination(#"[Merger] Merging formats into "/tmp/a b.mp4""#),
                        "a b.mp4", "Merger 行取引号内路径末段")
         XCTAssertNil(Downloader.parseDestination("[download] Got error: HTTP Error 403"), "非目标行返回 nil")
+    }
+
+    @MainActor
+    func testDownloadRetriesMediaForbiddenWithTheSameArguments() async throws {
+        let marker = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: marker) }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", """
+            if [ ! -e "$1" ]; then
+                touch "$1" || exit 2
+                printf 'ERROR: unable to download video data: HTTP Error 403: Forbidden' >&2
+                exit 1
+            fi
+            printf '[Merger] Merging formats into "%s"\\n' "$2"
+            """, "yt-dlp", marker.path, "Axolotl.mp4"]
+
+        let finished = expectation(description: "成功重试并返回合并后的文件名")
+        let downloader = Downloader()
+        downloader.runDownload(process, retryOnForbidden: true, onProgress: { _, _ in }) { result in
+            if case .success(let name) = result {
+                XCTAssertEqual(name, "Axolotl.mp4")
+            } else {
+                XCTFail("媒体 403 后应重新启动下载")
+            }
+            finished.fulfill()
+        }
+        await fulfillment(of: [finished], timeout: 5)
     }
 
     // MARK: - 新片场解析

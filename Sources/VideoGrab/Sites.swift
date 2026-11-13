@@ -35,6 +35,8 @@ enum Sites {
 
     static func isVimeo(_ host: String) -> Bool { matches(host, vimeoHosts) }
 
+    static func isYouTube(_ host: String) -> Bool { matches(host, ["youtube.com", "youtu.be"]) }
+
     static func isWechatChannels(_ host: String) -> Bool { matches(host, wechatChannelsHosts) }
 
     // 需要读取浏览器 Cookie 才能稳定下载的站点（登录态/风控）
